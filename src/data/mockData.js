@@ -6,7 +6,7 @@ window.YAWL_DATA = {
     { id: 'giveaways', label: 'Giveaways' },
     { id: 'hangouts', label: 'Hangouts' },
     { id: 'notes', label: 'My Notes' },
-    { id: 'admin', label: 'Admin' },
+    { id: 'account', label: 'Account' },
   ],
 
   members: [
@@ -110,7 +110,7 @@ window.YAWL_DATA = {
     'Run 05_member_roles_and_permissions.sql to add visible member roles and the staff-permissions table.',
     'Run 06_gothicka_admin_access.sql to register Gothicka as the first admin staff record.',
     'Run 07_admin_editor_auth_policies.sql so signed-in staff can read their profile and edit allowed member roles.',
-    'Use the Admin tab to create or sign in to the matching Supabase Auth account before editing members.',
+    'Use the Account tab to create or sign in to the matching Supabase Auth account before editing members.',
     'Keep private notes and gifted or visited tracking local-only.',
   ],
 };

@@ -1,6 +1,6 @@
 # YAWL Hub Handoff
 
-Last updated: 2026-05-05
+Last updated: 2026-05-06
 
 ## Current State
 
@@ -16,9 +16,11 @@ Last updated: 2026-05-05
 - Members page uses a Facebook-first row layout.
 - YoWorld name is shown as the confirmation field for gifting.
 - Member roles are supported in the UI: admin, event planner, moderator, helper, member.
-- Admin tab now supports:
+- Account section now supports:
   - Supabase email/password sign-in
-  - create account
+  - account creation
+  - private member login flow for non-staff accounts
+- Admin Tools is staff-only and supports:
   - add member
   - edit member
   - deactivate member
@@ -26,15 +28,15 @@ Last updated: 2026-05-05
 
 ## Important Files
 
-- `src/main.js`: main UI, live reads, admin auth/editor logic.
+- `src/main.js`: main UI, live reads, account auth flow, and staff-only admin editor logic.
 - `src/lib/supabase.js`: Supabase REST + auth/session helpers.
-- `src/styles.css`: app styling, directory rows, admin editor styling.
+- `src/styles.css`: app styling, directory rows, and account/admin UI styling.
 - `supabase/01_members_schema.sql`: base members table.
 - `supabase/02_enable_member_directory_read.sql`: anon/authenticated read access for active members.
 - `supabase/04_backfill_birthday_parts.sql`: fills birthday month/day after CSV import.
 - `supabase/05_member_roles_and_permissions.sql`: adds `group_role`, `staff_permissions`, and base write scaffolding.
 - `supabase/06_gothicka_admin_access.sql`: seeds `ywa.paint@gmail.com` as Gothicka admin.
-- `supabase/07_admin_editor_auth_policies.sql`: required for the Admin tab to read staff permissions and perform role-safe writes.
+- `supabase/07_admin_editor_auth_policies.sql`: required for the Account/Admin Tools flow to read staff permissions and perform role-safe writes.
 
 ## Required Supabase Run Order
 
@@ -61,14 +63,16 @@ They contain real member names, birthdays, and/or house-link data.
 
 ## Immediate Next Step
 
-Test the Admin tab against the real Supabase project:
+Test the Account and Admin Tools flow against the real Supabase project:
 
-1. Confirm `07_admin_editor_auth_policies.sql` has been run.
+1. Confirm `supabase/07_admin_editor_auth_policies.sql` has been run.
 2. Reload the app.
-3. Open the Admin tab.
+3. Open the Account section.
 4. Sign in or create the Supabase Auth account for `ywa.paint@gmail.com`.
 5. Verify:
-   - staff profile loads
+   - member account sign-in works without staff access
+   - Gothicka loads with staff permissions
+   - Admin Tools appears only for staff
    - add member works
    - edit member works
    - deactivate member works
@@ -76,11 +80,11 @@ Test the Admin tab against the real Supabase project:
 
 ## Likely Next Improvement
 
-- Split the current Admin access UX into a more general account flow so normal members can have private logins without the tab reading as admin-only.
 - Add search and filtering to the Facebook-first directory.
+- Extend private member login features beyond auth, such as saved preferences or private profile settings.
 
 ## Resume Prompt
 
 Use this prompt in a new chat if needed:
 
-"Continue work on YAWL Hub. The repo already has live Supabase member reads, Facebook-first member rows, member roles, and an admin auth/editor UI. Verify that `supabase/07_admin_editor_auth_policies.sql` is applied, then test and finish the admin sign-in/editing flow."
+"Continue work on YAWL Hub. The repo already has live Supabase member reads, Facebook-first member rows, a general Account login flow, and staff-only Admin Tools for editing members. Verify that `supabase/07_admin_editor_auth_policies.sql` is applied, then test and finish the account sign-in plus staff editing flow."

@@ -4,7 +4,7 @@ const {
   giveaways,
   hangouts,
   members: mockMembers,
-  sections,
+  sections: baseSections,
 } = window.YAWL_DATA;
 const {
   getStoredSession,
@@ -153,6 +153,8 @@ app.addEventListener('submit', async (event) => {
 });
 
 function render() {
+  ensureValidActiveSection();
+
   app.innerHTML = `
     <div class="shell">
       <aside class="sidebar">
@@ -167,7 +169,7 @@ function render() {
         </div>
 
         <nav class="nav-list" aria-label="Primary">
-          ${sections
+          ${getSections()
             .map(
               (section) => `
                 <button
@@ -271,12 +273,40 @@ function renderHeaderLinks() {
 }
 
 function getSectionTitle() {
-  const current = sections.find((section) => section.id === state.activeSection);
+  const current = getSections().find((section) => section.id === state.activeSection);
   return current ? current.label : 'This Week';
+}
+
+function getSections() {
+  const visibleSections = [...baseSections];
+
+  if (canManageMembers()) {
+    visibleSections.push({ id: 'admin', label: 'Admin Tools' });
+  }
+
+  return visibleSections;
+}
+
+function ensureValidActiveSection() {
+  const visibleSectionIds = new Set(getSections().map((section) => section.id));
+
+  if (!visibleSectionIds.has(state.activeSection)) {
+    state.activeSection = visibleSectionIds.has('account') ? 'account' : 'dashboard';
+  }
+}
+
+function hasStaffProfile() {
+  return Boolean(state.admin.staffProfile?.isActive);
+}
+
+function canManageMembers() {
+  return Boolean(state.admin.staffProfile?.isActive && state.admin.staffProfile.canManageMembers);
 }
 
 function renderSection() {
   switch (state.activeSection) {
+    case 'account':
+      return renderAccount();
     case 'members':
       return renderMembers();
     case 'birthdays':
@@ -709,16 +739,14 @@ function renderNotes() {
   `;
 }
 
-function renderAdmin() {
-  const currentMembers = getMembers();
-
+function renderAccount() {
   if (!hasSupabaseConfig) {
     return `
       <section class="panel-grid panel-grid--admin">
         <article class="panel panel--announcement panel--span-full">
-          <p class="eyebrow">Admin Access</p>
+          <p class="eyebrow">Account Access</p>
           <h3>Supabase config is still missing</h3>
-          <p class="panel-lead">Add the Supabase URL and anon key in src/config.js before using the admin editor.</p>
+          <p class="panel-lead">Add the Supabase URL and anon key in src/config.js before using private accounts or staff tools.</p>
         </article>
       </section>
     `;
@@ -728,8 +756,8 @@ function renderAdmin() {
     return `
       <section class="panel-grid panel-grid--admin">
         <article class="panel panel--announcement panel--span-full">
-          <p class="eyebrow">Admin Access</p>
-          <h3>Checking your admin session</h3>
+          <p class="eyebrow">Account Access</p>
+          <h3>Checking your account session</h3>
           <p class="panel-lead">Loading sign-in status and staff permissions from Supabase.</p>
         </article>
       </section>
@@ -740,20 +768,73 @@ function renderAdmin() {
     return `
       <section class="panel-grid panel-grid--admin">
         ${renderAdminAuthPanel()}
+        ${renderAccountInfoPanel()}
+      </section>
+    `;
+  }
+
+  return `
+    <section class="panel-grid panel-grid--admin">
+      ${renderAdminSessionPanel()}
+      ${renderAccountInfoPanel()}
+      ${canManageMembers() ? renderAdminLaunchPanel() : ''}
+    </section>
+  `;
+}
+
+function renderAdmin() {
+  const currentMembers = getMembers();
+
+  if (!hasSupabaseConfig) {
+    return `
+      <section class="panel-grid panel-grid--admin">
+        <article class="panel panel--announcement panel--span-full">
+          <p class="eyebrow">Admin Tools</p>
+          <h3>Supabase config is still missing</h3>
+          <p class="panel-lead">Add the Supabase URL and anon key in src/config.js before using staff editing tools.</p>
+        </article>
+      </section>
+    `;
+  }
+
+  if (!state.admin.isReady) {
+    return `
+      <section class="panel-grid panel-grid--admin">
+        <article class="panel panel--announcement panel--span-full">
+          <p class="eyebrow">Admin Tools</p>
+          <h3>Checking your staff session</h3>
+          <p class="panel-lead">Loading sign-in status and staff permissions from Supabase.</p>
+        </article>
+      </section>
+    `;
+  }
+
+  if (!state.admin.session) {
+    return `
+      <section class="panel-grid panel-grid--admin">
+        <article class="panel panel--announcement panel--span-full">
+          <p class="eyebrow">Admin Tools</p>
+          <h3>Sign in first</h3>
+          <p class="panel-lead">Open the Account section to create or sign in to your private login before using staff editing tools.</p>
+          <div class="button-row">
+            <button class="hero-button" type="button" data-section="account">Open Account</button>
+          </div>
+        </article>
         ${renderAdminChecklistPanel()}
       </section>
     `;
   }
 
-  if (!state.admin.staffProfile) {
+  if (!hasStaffProfile()) {
     return `
       <section class="panel-grid panel-grid--admin">
         ${renderAdminSessionPanel()}
         <article class="panel panel--announcement">
           <p class="eyebrow">Staff Access</p>
-          <h3>This account is signed in but not ready to edit</h3>
-          <p class="panel-lead">${escapeHtml(state.admin.notice || 'The signed-in email is missing a readable staff_permissions record, or the staff policy SQL has not been run yet.')}</p>
+          <h3>This account is signed in as a member</h3>
+          <p class="panel-lead">${escapeHtml(state.admin.notice || 'This account does not have a staff_permissions record, so admin tools stay locked.')}</p>
           <div class="button-row">
+            <button class="hero-button" type="button" data-section="account">Open Account</button>
             <button class="hero-button hero-button--secondary" type="button" data-action="admin-refresh-session">Refresh permissions</button>
             <button class="hero-button hero-button--secondary" type="button" data-action="admin-sign-out">Sign out</button>
           </div>
@@ -789,15 +870,15 @@ function renderAdmin() {
 function renderAdminAuthPanel() {
   return `
     <article class="panel panel--announcement">
-      <p class="eyebrow">Admin Access</p>
-      <h3>Sign in to manage members</h3>
-      <p class="panel-lead">Use the same email that exists in staff_permissions. If you do not have an Auth account yet, create one here first.</p>
+      <p class="eyebrow">Account Access</p>
+      <h3>Create or sign in to your private account</h3>
+      <p class="panel-lead">Passwords stay private. Staff editing only unlocks if the signed-in email also exists in staff_permissions.</p>
       ${renderAdminNotice()}
       <form class="admin-form" data-admin-auth-form>
         <div class="form-grid">
           <label class="field-group">
             <span>Email</span>
-            <input class="text-input" type="email" name="email" value="${escapeHtml(state.admin.session?.user?.email || 'ywa.paint@gmail.com')}" autocomplete="email" required />
+            <input class="text-input" type="email" name="email" value="${escapeHtml(state.admin.session?.user?.email || '')}" autocomplete="email" required />
           </label>
           <label class="field-group">
             <span>Password</span>
@@ -816,19 +897,69 @@ function renderAdminAuthPanel() {
 function renderAdminSessionPanel() {
   const staffProfile = state.admin.staffProfile;
   const sessionEmail = cleanText(state.admin.session?.user?.email || '');
+  const isStaff = hasStaffProfile();
 
   return `
     <article class="panel panel--announcement">
-      <p class="eyebrow">Admin Session</p>
-      <h3>${escapeHtml(staffProfile?.displayName || 'Signed in')}</h3>
+      <p class="eyebrow">Account Session</p>
+      <h3>${escapeHtml(staffProfile?.displayName || 'Member Account')}</h3>
       <p class="panel-lead">${escapeHtml(sessionEmail || 'No active session email found.')}</p>
       ${renderAdminNotice()}
       <div class="permission-badges">
-        ${staffProfile ? renderPermissionBadges(staffProfile) : ''}
+        ${isStaff ? renderPermissionBadges(staffProfile) : '<span class="tag tag--muted">Member account</span>'}
       </div>
       <div class="button-row admin-form-actions">
+        ${canManageMembers() ? '<button class="hero-button" type="button" data-section="admin">Open Admin Tools</button>' : ''}
         <button class="hero-button hero-button--secondary" type="button" data-action="admin-refresh-session">Refresh permissions</button>
         <button class="hero-button hero-button--secondary" type="button" data-action="admin-sign-out">Sign Out</button>
+      </div>
+    </article>
+  `;
+}
+
+function renderAccountInfoPanel() {
+  const isSignedIn = Boolean(state.admin.session);
+
+  return `
+    <article class="panel">
+      <div class="panel__heading">
+        <div>
+          <p class="eyebrow">Account</p>
+          <h3>${escapeHtml(isSignedIn ? 'What this login does' : 'Private member login')}</h3>
+        </div>
+      </div>
+      <p class="panel-lead">Members can create their own login without sharing a password with admins. Staff permissions stay separate from normal account creation.</p>
+      <div class="stack-list">
+        <div class="list-row list-row--compact">
+          <strong>Password privacy</strong>
+          <span>Admins cannot see member passwords.</span>
+        </div>
+        <div class="list-row list-row--compact">
+          <strong>Member login</strong>
+          <span>Create an account for private features and future saved preferences.</span>
+        </div>
+        <div class="list-row list-row--compact">
+          <strong>Staff editing</strong>
+          <span>Only emails in staff_permissions unlock the editor.</span>
+        </div>
+      </div>
+    </article>
+  `;
+}
+
+function renderAdminLaunchPanel() {
+  return `
+    <article class="panel panel--directory">
+      <div class="panel__heading">
+        <div>
+          <p class="eyebrow">Staff</p>
+          <h3>Admin tools are unlocked</h3>
+        </div>
+        <span class="tag tag--role-admin">Staff access</span>
+      </div>
+      <p class="panel-lead">This account can manage the live member directory. Open the editor when you want to add, update, deactivate, or change visible roles.</p>
+      <div class="button-row">
+        <button class="hero-button" type="button" data-section="admin">Open Admin Tools</button>
       </div>
     </article>
   `;
@@ -1100,7 +1231,7 @@ async function initializeAdminSession(showRefreshMessage = false) {
   if (session) {
     await loadStaffProfile();
   } else if (showRefreshMessage) {
-    setAdminNotice('No active admin session was found. Sign in again to edit members.', 'muted');
+    setAdminNotice('No active account session was found. Sign in again to continue.', 'muted');
   }
 
   state.admin.isReady = true;
@@ -1133,8 +1264,8 @@ async function loadStaffProfile() {
   const profile = Array.isArray(rows) ? rows[0] : null;
   state.admin.staffProfile = profile ? normalizeStaffProfile(profile) : null;
 
-  if (!state.admin.staffProfile) {
-    setAdminNotice('Signed in, but this email does not have an active staff permission record yet.', 'error');
+  if (!hasStaffProfile()) {
+    setAdminNotice('Signed in. This account can use private login features, but staff editing is still locked.', 'muted');
     return;
   }
 
@@ -1173,7 +1304,7 @@ async function handleAdminAuthSubmit(event) {
   }
 
   state.admin.isBusy = true;
-  setAdminNotice(mode === 'create-account' ? 'Creating your admin auth account...' : 'Signing in...', 'muted');
+  setAdminNotice(mode === 'create-account' ? 'Creating your account...' : 'Signing in...', 'muted');
   render();
 
   try {
@@ -1194,7 +1325,7 @@ async function handleAdminAuthSubmit(event) {
       await loadStaffProfile();
     }
   } catch (error) {
-    setAdminNotice(error instanceof Error ? error.message : 'Admin sign-in failed.', 'error');
+    setAdminNotice(error instanceof Error ? error.message : 'Account sign-in failed.', 'error');
   } finally {
     state.admin.isBusy = false;
     state.admin.isReady = true;
@@ -1206,6 +1337,9 @@ async function handleAdminSignOut() {
   await signOut();
   state.admin = createDefaultAdminState();
   state.admin.isReady = true;
+  if (state.activeSection === 'admin') {
+    state.activeSection = 'account';
+  }
   setAdminNotice('Signed out.', 'muted');
   render();
 }

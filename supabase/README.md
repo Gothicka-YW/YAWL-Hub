@@ -10,7 +10,7 @@ Use these files in order:
 6. When ready, run `02_enable_member_directory_read.sql`.
 7. Run `05_member_roles_and_permissions.sql` when you are ready to add visible member roles and future write-permission scaffolding.
 8. Replace the placeholder email in `06_gothicka_admin_access.sql`, then run it to register Gothicka as your first admin for future authenticated editing.
-9. Run `07_admin_editor_auth_policies.sql` before using the Admin tab to sign in and edit members from the app.
+9. Run `07_admin_editor_auth_policies.sql` before using the Account section to sign in and the Admin Tools section to edit members from the app.
 10. Create or sign in to a Supabase Auth account that uses the same email as your `staff_permissions` row.
 
 Notes:
