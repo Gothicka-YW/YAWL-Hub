@@ -45,6 +45,7 @@ Apply the existing SQL files from the terminal:
 - Single file: `supabase db query --linked -f supabase/08_events_calendar.sql`
 - Helper script, one file: `./scripts/apply-supabase-sql.ps1 -Files supabase/08_events_calendar.sql`
 - Helper script, full ordered set: `./scripts/apply-supabase-sql.ps1 -All`
+- Optional sample event seed: `./scripts/apply-supabase-sql.ps1 -Files supabase/09_seed_sample_event.sql`
 
 Future schema changes:
 

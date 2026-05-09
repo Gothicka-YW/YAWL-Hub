@@ -3,7 +3,7 @@
 	"tasks": [
 		{
 			"label": "Link YAWL Supabase Project",
-			"type": "shell",
+			"type": "process",
 			"command": "powershell",
 			"args": [
 				"-NoProfile",

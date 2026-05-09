@@ -1,10 +1,20 @@
 param(
-  [Parameter(Mandatory = $true)]
   [string]$DatabasePassword
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+
+function Read-PlainTextPassword {
+  $securePassword = Read-Host -Prompt 'Supabase database password' -AsSecureString
+  $passwordPointer = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($securePassword)
+
+  try {
+    return [Runtime.InteropServices.Marshal]::PtrToStringBSTR($passwordPointer)
+  } finally {
+    [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($passwordPointer)
+  }
+}
 
 function Get-SupabaseCliPath {
   $command = Get-Command supabase -ErrorAction SilentlyContinue
@@ -24,6 +34,14 @@ $projectRef = 'lwjueqljcdmdfumjeggn'
 $scriptDirectory = Split-Path -Parent $MyInvocation.MyCommand.Path
 $repoRoot = Split-Path -Parent $scriptDirectory
 $supabaseCli = Get-SupabaseCliPath
+
+if (-not $DatabasePassword) {
+  $DatabasePassword = Read-PlainTextPassword
+}
+
+if (-not $DatabasePassword) {
+  throw 'A database password is required to link the Supabase project.'
+}
 
 Push-Location $repoRoot
 try {
