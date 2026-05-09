@@ -2,7 +2,7 @@ const {
   adminChecklist,
   dashboard,
   giveaways,
-  hangouts,
+  hangouts: mockHangouts,
   members: mockMembers,
   sections: baseSections,
 } = window.YAWL_DATA;
@@ -50,6 +50,15 @@ const MONTH_NAMES = [
   'November',
   'December',
 ];
+const EVENT_TYPE_DETAILS = {
+  hangout: { label: 'Hangout', indicator: 'H', className: 'event-type-icon--hangout' },
+  party: { label: 'Party', indicator: 'P', className: 'event-type-icon--party' },
+  wishlist: { label: 'Wishlist', indicator: 'W', className: 'event-type-icon--wishlist' },
+  game: { label: 'Game', indicator: 'G', className: 'event-type-icon--game' },
+  meetup: { label: 'Meet Up', indicator: 'M', className: 'event-type-icon--meetup' },
+  other: { label: 'Special Event', indicator: '+', className: 'event-type-icon--other' },
+};
+const DEFAULT_EVENT_TIMEZONE = cleanText(window.YAWL_CONFIG.defaultEventTimezone || 'ET') || 'ET';
 
 const defaultPrivateState = {
   notes: '',
@@ -63,6 +72,9 @@ const state = {
   members: normalizeMockMembers(mockMembers),
   memberSource: hasSupabaseConfig ? 'loading' : 'mock',
   memberSourceMessage: hasSupabaseConfig ? 'Supabase config detected. Loading live member directory...' : getSupabaseStatus(),
+  events: normalizeMockEvents(mockHangouts),
+  eventSource: hasSupabaseConfig ? 'loading' : 'mock',
+  eventSourceMessage: hasSupabaseConfig ? 'Supabase config detected. Loading shared events...' : getSupabaseStatus(),
   admin: createDefaultAdminState(),
 };
 
@@ -70,7 +82,17 @@ const app = document.querySelector('#app');
 
 render();
 void loadLiveMembers();
+void loadLiveEvents();
 void initializeAdminSession();
+
+window.addEventListener('focus', () => {
+  if (!hasSupabaseConfig) {
+    return;
+  }
+
+  void loadLiveMembers();
+  void loadLiveEvents();
+});
 
 app.addEventListener('click', async (event) => {
   const navButton = event.target.closest('[data-section]');
@@ -103,7 +125,7 @@ app.addEventListener('click', async (event) => {
     return;
   }
 
-  const { action, memberId } = actionButton.dataset;
+  const { action, memberId, eventId } = actionButton.dataset;
 
   switch (action) {
     case 'admin-edit-member':
@@ -114,6 +136,14 @@ app.addEventListener('click', async (event) => {
       resetAdminEditor();
       render();
       return;
+    case 'admin-edit-event':
+      beginEditingEvent(eventId);
+      render();
+      return;
+    case 'admin-reset-event-form':
+      resetAdminEventEditor();
+      render();
+      return;
     case 'admin-refresh-session':
       await initializeAdminSession(true);
       return;
@@ -122,6 +152,9 @@ app.addEventListener('click', async (event) => {
       return;
     case 'admin-deactivate-member':
       await deactivateMember(memberId);
+      return;
+    case 'admin-deactivate-event':
+      await deactivateEvent(eventId);
       return;
     default:
       return;
@@ -149,6 +182,12 @@ app.addEventListener('submit', async (event) => {
   if (event.target.matches('[data-admin-member-form]')) {
     event.preventDefault();
     await handleAdminMemberSubmit(event);
+    return;
+  }
+
+  if (event.target.matches('[data-admin-event-form]')) {
+    event.preventDefault();
+    await handleAdminEventSubmit(event);
   }
 });
 
@@ -280,7 +319,7 @@ function getSectionTitle() {
 function getSections() {
   const visibleSections = [...baseSections];
 
-  if (canManageMembers()) {
+  if (hasAdminToolsAccess()) {
     visibleSections.push({ id: 'admin', label: 'Admin Tools' });
   }
 
@@ -301,6 +340,14 @@ function hasStaffProfile() {
 
 function canManageMembers() {
   return Boolean(state.admin.staffProfile?.isActive && state.admin.staffProfile.canManageMembers);
+}
+
+function canManageEvents() {
+  return Boolean(state.admin.staffProfile?.isActive && state.admin.staffProfile.canManageEvents);
+}
+
+function hasAdminToolsAccess() {
+  return canManageMembers() || canManageEvents();
 }
 
 function renderSection() {
@@ -387,7 +434,7 @@ function renderDashboard() {
         <div class="panel__heading">
           <div>
             <p class="eyebrow">Upcoming</p>
-            <h3>Birthdays and hangouts</h3>
+            <h3>Birthdays and events</h3>
           </div>
         </div>
         <div class="stack-list">
@@ -647,39 +694,73 @@ function renderGiveaways() {
 }
 
 function renderHangouts() {
+  const currentEvents = getEvents();
+
   return `
     <section class="panel-grid panel-grid--members">
-      ${hangouts
-        .map(
-          (hangout) => `
-            <article class="panel">
-              <div class="panel__heading">
-                <div>
-                  <p class="eyebrow">Hangout</p>
-                  <h3>${hangout.title}</h3>
-                </div>
-                <span class="tag">${hangout.when}</span>
-              </div>
-              <p>Host: ${hangout.host}</p>
-              <div class="stats-grid stats-grid--compact">
-                <div class="stat-card">
-                  <span>Yes</span>
-                  <strong>${hangout.yes}</strong>
-                </div>
-                <div class="stat-card">
-                  <span>Maybe</span>
-                  <strong>${hangout.maybe}</strong>
-                </div>
-                <div class="stat-card">
-                  <span>No</span>
-                  <strong>${hangout.no}</strong>
-                </div>
-              </div>
-            </article>
-          `,
-        )
-        .join('')}
+      ${renderEventSourceNotice()}
+      ${currentEvents.length
+        ? currentEvents.map((calendarEvent) => renderEventCard(calendarEvent)).join('')
+        : renderEmptyEventPanel(
+            state.eventSource === 'loading' ? 'Loading events' : 'No events posted yet',
+            state.eventSource === 'loading'
+              ? 'Trying to load the shared event calendar from Supabase now.'
+              : 'No hangouts, parties, games, or meet ups have been added yet.',
+          )}
     </section>
+  `;
+}
+
+function renderEventCard(calendarEvent, options = {}) {
+  const { showAdminActions = false } = options;
+
+  return `
+    <article class="panel event-card">
+      <div class="panel__heading">
+        <div class="event-title-row">
+          <span class="event-type-icon ${calendarEvent.typeIndicatorClass}" aria-hidden="true">${escapeHtml(calendarEvent.typeIndicator)}</span>
+          <div>
+            <p class="eyebrow">${escapeHtml(calendarEvent.eventTypeLabel)}</p>
+            <h3>${escapeHtml(calendarEvent.title)}</h3>
+          </div>
+        </div>
+        <span class="tag">${escapeHtml(calendarEvent.whenLabel)}</span>
+      </div>
+      <p class="panel-lead">${escapeHtml(calendarEvent.details || getDefaultEventDescription(calendarEvent.eventType))}</p>
+      <div class="event-meta">
+        <div class="event-meta-row">
+          <strong>Host</strong>
+          <span>${escapeHtml(calendarEvent.hostName || 'Host coming soon')}</span>
+        </div>
+        <div class="event-meta-row">
+          <strong>Location</strong>
+          <span>${escapeHtml(calendarEvent.locationText || 'Location coming soon')}</span>
+        </div>
+      </div>
+      ${calendarEvent.eventLink ? `<div class="button-row event-links"><a class="hero-button hero-button--secondary" href="${calendarEvent.eventLink}" target="_blank" rel="noreferrer">Open Event Link</a></div>` : ''}
+      <div class="stats-grid stats-grid--compact event-stats">
+        <div class="stat-card">
+          <span>Yes</span>
+          <strong>${calendarEvent.yesCount}</strong>
+        </div>
+        <div class="stat-card">
+          <span>Maybe</span>
+          <strong>${calendarEvent.maybeCount}</strong>
+        </div>
+        <div class="stat-card">
+          <span>No</span>
+          <strong>${calendarEvent.noCount}</strong>
+        </div>
+      </div>
+      ${showAdminActions
+        ? `
+            <div class="button-row admin-form-actions">
+              <button class="hero-button hero-button--secondary" type="button" data-action="admin-edit-event" data-event-id="${escapeHtml(calendarEvent.id)}">Edit Event</button>
+              <button class="tracker-button" type="button" data-action="admin-deactivate-event" data-event-id="${escapeHtml(calendarEvent.id)}">Deactivate Event</button>
+            </div>
+          `
+        : ''}
+    </article>
   `;
 }
 
@@ -777,7 +858,7 @@ function renderAccount() {
     <section class="panel-grid panel-grid--admin">
       ${renderAdminSessionPanel()}
       ${renderAccountInfoPanel()}
-      ${canManageMembers() ? renderAdminLaunchPanel() : ''}
+      ${hasAdminToolsAccess() ? renderAdminLaunchPanel() : ''}
     </section>
   `;
 }
@@ -844,14 +925,14 @@ function renderAdmin() {
     `;
   }
 
-  if (!state.admin.staffProfile.canManageMembers) {
+  if (!hasAdminToolsAccess()) {
     return `
       <section class="panel-grid panel-grid--admin">
         ${renderAdminSessionPanel()}
         <article class="panel panel--announcement">
-          <p class="eyebrow">Member Editing</p>
-          <h3>This staff role cannot edit members</h3>
-          <p class="panel-lead">Your account is authenticated, but it does not currently have member-management permission.</p>
+          <p class="eyebrow">Admin Tools</p>
+          <h3>This staff role cannot edit live data</h3>
+          <p class="panel-lead">Your account is authenticated, but it does not currently have member-management or event-management permission.</p>
         </article>
         ${renderAdminChecklistPanel()}
       </section>
@@ -861,8 +942,10 @@ function renderAdmin() {
   return `
     <section class="panel-grid panel-grid--admin">
       ${renderAdminSessionPanel()}
-      ${renderAdminEditorPanel()}
-      ${renderAdminMembersPanel(currentMembers)}
+      ${canManageMembers() ? renderAdminEditorPanel() : ''}
+      ${canManageEvents() ? renderAdminEventEditorPanel(currentMembers) : ''}
+      ${canManageMembers() ? renderAdminMembersPanel(currentMembers) : ''}
+      ${canManageEvents() ? renderAdminEventsPanel() : ''}
     </section>
   `;
 }
@@ -909,7 +992,7 @@ function renderAdminSessionPanel() {
         ${isStaff ? renderPermissionBadges(staffProfile) : '<span class="tag tag--muted">Member account</span>'}
       </div>
       <div class="button-row admin-form-actions">
-        ${canManageMembers() ? '<button class="hero-button" type="button" data-section="admin">Open Admin Tools</button>' : ''}
+        ${hasAdminToolsAccess() ? '<button class="hero-button" type="button" data-section="admin">Open Admin Tools</button>' : ''}
         <button class="hero-button hero-button--secondary" type="button" data-action="admin-refresh-session">Refresh permissions</button>
         <button class="hero-button hero-button--secondary" type="button" data-action="admin-sign-out">Sign Out</button>
       </div>
@@ -948,6 +1031,16 @@ function renderAccountInfoPanel() {
 }
 
 function renderAdminLaunchPanel() {
+  const liveTools = [];
+
+  if (canManageMembers()) {
+    liveTools.push('member directory and birthdays');
+  }
+
+  if (canManageEvents()) {
+    liveTools.push('shared event calendar');
+  }
+
   return `
     <article class="panel panel--directory">
       <div class="panel__heading">
@@ -957,7 +1050,7 @@ function renderAdminLaunchPanel() {
         </div>
         <span class="tag tag--role-admin">Staff access</span>
       </div>
-      <p class="panel-lead">This account can manage the live member directory. Open the editor when you want to add, update, deactivate, or change visible roles.</p>
+      <p class="panel-lead">This account can manage the live ${escapeHtml(liveTools.join(' and ') || 'staff tools')}. Open the editor when you want to add, update, deactivate, or organize shared group data.</p>
       <div class="button-row">
         <button class="hero-button" type="button" data-section="admin">Open Admin Tools</button>
       </div>
@@ -985,12 +1078,12 @@ function renderAdminEditorPanel() {
     <article class="panel">
       <div class="panel__heading">
         <div>
-          <p class="eyebrow">Member Editor</p>
+          <p class="eyebrow">Member and Birthday Editor</p>
           <h3>${isEditing ? 'Edit member' : 'Add member'}</h3>
         </div>
         <span class="tag">${escapeHtml(isEditing ? 'Editing active member' : 'New active member')}</span>
       </div>
-      <p class="panel-lead">Use Facebook names as the primary label. Set the YoWorld name as the gift-confirmation name.</p>
+      <p class="panel-lead">Use Facebook names as the primary label. Set the YoWorld name as the gift-confirmation name and add birthdays here for the shared birthday board.</p>
       <form class="admin-form" data-admin-member-form>
         <div class="form-grid">
           <label class="field-group">
@@ -1008,6 +1101,7 @@ function renderAdminEditorPanel() {
           <label class="field-group">
             <span>Birthday</span>
             <input class="text-input" type="text" name="birthday_raw" value="${escapeHtml(form.birthdayRaw)}" placeholder="September 6" />
+            <small class="field-help">Use the Month Day format so it shows correctly on the birthdays page.</small>
           </label>
           <label class="field-group">
             <span>Visible Role</span>
@@ -1029,6 +1123,104 @@ function renderAdminEditorPanel() {
       <p class="muted">Removing a member uses a safe deactivate action. Hard delete is intentionally disabled.</p>
     </article>
   `;
+}
+
+function renderAdminEventEditorPanel(currentMembers) {
+  const form = state.admin.eventForm;
+  const isEditing = Boolean(state.admin.editingEventId);
+
+  return `
+    <article class="panel">
+      <div class="panel__heading">
+        <div>
+          <p class="eyebrow">Event Calendar Editor</p>
+          <h3>${isEditing ? 'Edit event' : 'Add event'}</h3>
+        </div>
+        <span class="tag">${escapeHtml(isEditing ? 'Editing live event' : 'Shared calendar')}</span>
+      </div>
+      <p class="panel-lead">Add hangouts, parties, wishlist nights, games, and meet ups here. The event type controls the icon shown next to the event title.</p>
+      <form class="admin-form" data-admin-event-form>
+        <div class="form-grid">
+          <label class="field-group">
+            <span>Event Type</span>
+            <select class="text-input" name="event_type">
+              ${renderEventTypeOptions(form.eventType)}
+            </select>
+            <small class="field-help">This drives the icon indicator next to the event title.</small>
+          </label>
+          <label class="field-group">
+            <span>Title</span>
+            <input class="text-input" type="text" name="title" value="${escapeHtml(form.title)}" required />
+          </label>
+          <label class="field-group">
+            <span>Date</span>
+            <input class="text-input" type="date" name="event_date" value="${escapeHtml(form.eventDate)}" required />
+          </label>
+          <label class="field-group">
+            <span>Start Time</span>
+            <input class="text-input" type="time" name="start_time" value="${escapeHtml(form.startTime)}" />
+            <small class="field-help">Leave blank for an all-day event.</small>
+          </label>
+          <label class="field-group">
+            <span>End Time</span>
+            <input class="text-input" type="time" name="end_time" value="${escapeHtml(form.endTime)}" />
+          </label>
+          <label class="field-group">
+            <span>Timezone Label</span>
+            <input class="text-input" type="text" name="timezone" value="${escapeHtml(form.timezone)}" placeholder="ET" />
+          </label>
+          <label class="field-group">
+            <span>Host</span>
+            <input class="text-input" type="text" name="host_name" value="${escapeHtml(form.hostName)}" list="event-host-options" placeholder="Nova June" />
+          </label>
+          <label class="field-group">
+            <span>Location</span>
+            <input class="text-input" type="text" name="location_text" value="${escapeHtml(form.locationText)}" placeholder="Party house, game room, Facebook thread, or meet-up spot" />
+          </label>
+          <label class="field-group">
+            <span>Event Link</span>
+            <input class="text-input" type="url" name="event_link" value="${escapeHtml(form.eventLink)}" placeholder="Optional Facebook thread or event link" />
+          </label>
+          <label class="field-group">
+            <span>Yes Count</span>
+            <input class="text-input" type="number" min="0" name="yes_count" value="${escapeHtml(form.yesCount)}" />
+          </label>
+          <label class="field-group">
+            <span>Maybe Count</span>
+            <input class="text-input" type="number" min="0" name="maybe_count" value="${escapeHtml(form.maybeCount)}" />
+          </label>
+          <label class="field-group">
+            <span>No Count</span>
+            <input class="text-input" type="number" min="0" name="no_count" value="${escapeHtml(form.noCount)}" />
+          </label>
+          <label class="field-group field-group--wide">
+            <span>Details</span>
+            <textarea name="details" class="admin-textarea" placeholder="Describe the theme, timing, dress code, gifts, or party details.">${escapeHtml(form.details)}</textarea>
+          </label>
+        </div>
+        <datalist id="event-host-options">
+          ${currentMembers
+            .map((member) => `<option value="${escapeHtml(member.facebookName || member.displayName)}"></option>`)
+            .join('')}
+        </datalist>
+        <div class="button-row admin-form-actions">
+          <button class="hero-button" type="submit">${escapeHtml(isEditing ? 'Save Event' : 'Add Event')}</button>
+          <button class="hero-button hero-button--secondary" type="button" data-action="admin-reset-event-form">${escapeHtml(isEditing ? 'Cancel Edit' : 'Clear Form')}</button>
+        </div>
+      </form>
+      <p class="muted">Event planners and admins can manage the live shared calendar here. Old events should be deactivated instead of hard deleted.</p>
+    </article>
+  `;
+}
+
+function renderEventTypeOptions(selectedType) {
+  return Object.keys(EVENT_TYPE_DETAILS)
+    .map(
+      (eventType) => `
+        <option value="${eventType}" ${normalizeEventType(selectedType) === eventType ? 'selected' : ''}>${escapeHtml(formatEventTypeLabel(eventType))}</option>
+      `,
+    )
+    .join('');
 }
 
 function renderRoleOptions(selectedRole) {
@@ -1118,6 +1310,32 @@ function renderAdminChecklistPanel() {
   `;
 }
 
+function renderAdminEventsPanel() {
+  const currentEvents = getEvents();
+
+  return `
+    <article class="panel panel--span-full panel--directory">
+      <div class="panel__heading">
+        <div>
+          <p class="eyebrow">Manage Events</p>
+          <h3>Shared event calendar</h3>
+        </div>
+        <span class="tag">${escapeHtml(`${currentEvents.length} active events`)}</span>
+      </div>
+      <p class="panel-lead">These events power the Events tab for everyone in the group. Use event types to surface the right icon and vibe for each listing.</p>
+      <div class="event-grid">
+        ${currentEvents.length
+          ? currentEvents.map((calendarEvent) => renderEventCard(calendarEvent, { showAdminActions: true })).join('')
+          : `
+              <div class="list-row list-row--compact">
+                <span>${escapeHtml(state.eventSource === 'loading' ? 'Loading live events...' : 'No events are active yet.')}</span>
+              </div>
+            `}
+      </div>
+    </article>
+  `;
+}
+
 function renderAdminNotice() {
   if (!state.admin.notice) {
     return '';
@@ -1128,6 +1346,10 @@ function renderAdminNotice() {
 
 function getMembers() {
   return state.members;
+}
+
+function getEvents() {
+  return [...state.events].sort(compareEvents);
 }
 
 function getBirthdayMembers() {
@@ -1191,6 +1413,42 @@ function renderEmptyMemberPanel(title, message) {
   `;
 }
 
+function renderEmptyEventPanel(title, message) {
+  return `
+    <article class="panel panel--announcement panel--span-full">
+      <p class="eyebrow">Events</p>
+      <h3>${escapeHtml(title)}</h3>
+      <p class="panel-lead">${escapeHtml(message)}</p>
+    </article>
+  `;
+}
+
+function renderEventSourceNotice() {
+  if (state.eventSource === 'live') {
+    return '';
+  }
+
+  let title = 'Using demo events';
+  let message = state.eventSourceMessage || getSupabaseStatus();
+
+  if (state.eventSource === 'loading') {
+    title = 'Loading shared events';
+    message = 'The app found your Supabase config and is trying to load the live event calendar now.';
+  } else if (state.eventSource === 'restricted') {
+    title = 'Events are still private';
+  } else if (state.eventSource === 'error') {
+    title = 'Live events are unavailable';
+  }
+
+  return `
+    <article class="panel panel--announcement panel--span-full">
+      <p class="eyebrow">Events Status</p>
+      <h3>${escapeHtml(title)}</h3>
+      <p class="panel-lead">${escapeHtml(message)}</p>
+    </article>
+  `;
+}
+
 function createDefaultAdminState() {
   return {
     session: getStoredSession(),
@@ -1201,6 +1459,8 @@ function createDefaultAdminState() {
     noticeTone: 'muted',
     editingMemberId: '',
     form: createEmptyMemberForm(),
+    editingEventId: '',
+    eventForm: createEmptyEventForm(),
   };
 }
 
@@ -1217,6 +1477,24 @@ function createEmptyMemberForm(member = null) {
     birthdayRaw: cleanText(member?.birthdayRaw),
     groupRole: normalizeGroupRole(member?.groupRole),
     notes: cleanText(member?.notes),
+  };
+}
+
+function createEmptyEventForm(calendarEvent = null) {
+  return {
+    title: cleanText(calendarEvent?.title),
+    eventType: normalizeEventType(calendarEvent?.eventType),
+    eventDate: cleanText(calendarEvent?.eventDate),
+    startTime: normalizeEventTime(calendarEvent?.startTime),
+    endTime: normalizeEventTime(calendarEvent?.endTime),
+    timezone: cleanText(calendarEvent?.timezone) || DEFAULT_EVENT_TIMEZONE,
+    hostName: cleanText(calendarEvent?.hostName),
+    locationText: cleanText(calendarEvent?.locationText),
+    eventLink: cleanText(calendarEvent?.eventLink),
+    yesCount: String(normalizeEventCount(calendarEvent?.yesCount)),
+    maybeCount: String(normalizeEventCount(calendarEvent?.maybeCount)),
+    noCount: String(normalizeEventCount(calendarEvent?.noCount)),
+    details: cleanText(calendarEvent?.details),
   };
 }
 
@@ -1363,6 +1641,25 @@ function resetAdminEditor() {
   setAdminNotice('Member form reset.', 'muted');
 }
 
+function beginEditingEvent(eventId) {
+  const calendarEvent = getEvents().find((entry) => entry.id === eventId);
+
+  if (!calendarEvent) {
+    setAdminNotice('That event could not be found.', 'error');
+    return;
+  }
+
+  state.admin.editingEventId = calendarEvent.id;
+  state.admin.eventForm = createEmptyEventForm(calendarEvent);
+  setAdminNotice(`Editing ${calendarEvent.title}.`, 'muted');
+}
+
+function resetAdminEventEditor() {
+  state.admin.editingEventId = '';
+  state.admin.eventForm = createEmptyEventForm();
+  setAdminNotice('Event form reset.', 'muted');
+}
+
 async function handleAdminMemberSubmit(event) {
   if (!state.admin.staffProfile?.canManageMembers) {
     setAdminNotice('This account does not have permission to manage members.', 'error');
@@ -1424,6 +1721,59 @@ async function handleAdminMemberSubmit(event) {
   }
 }
 
+async function handleAdminEventSubmit(event) {
+  if (!canManageEvents()) {
+    setAdminNotice('This account does not have permission to manage events.', 'error');
+    render();
+    return;
+  }
+
+  state.admin.isBusy = true;
+  setAdminNotice(state.admin.editingEventId ? 'Saving event changes...' : 'Adding event...', 'muted');
+  render();
+
+  try {
+    const payload = buildEventPayload(new FormData(event.target));
+    const wasEditing = Boolean(state.admin.editingEventId);
+    const response = state.admin.editingEventId
+      ? await supabaseFetch('events', {
+          method: 'PATCH',
+          query: new URLSearchParams({ id: `eq.${state.admin.editingEventId}` }).toString(),
+          useSession: true,
+          headers: {
+            Prefer: 'return=representation',
+          },
+          body: payload,
+        })
+      : await supabaseFetch('events', {
+          method: 'POST',
+          useSession: true,
+          headers: {
+            Prefer: 'return=representation',
+          },
+          body: payload,
+        });
+
+    if (!response.ok) {
+      throw new Error(await getSupabaseErrorMessage(response, 'event-write'));
+    }
+
+    const rows = await response.json();
+    const savedRow = Array.isArray(rows) ? rows[0] : rows;
+    const savedTitle = cleanText(savedRow?.title) || payload.title;
+
+    state.admin.editingEventId = '';
+    state.admin.eventForm = createEmptyEventForm();
+    await loadLiveEvents();
+    setAdminNotice(wasEditing ? `Saved ${savedTitle}.` : `${savedTitle} is now on the shared calendar.`, 'success');
+  } catch (error) {
+    setAdminNotice(error instanceof Error ? error.message : 'Could not save that event.', 'error');
+  } finally {
+    state.admin.isBusy = false;
+    render();
+  }
+}
+
 async function deactivateMember(memberId) {
   if (!state.admin.staffProfile?.canManageMembers) {
     setAdminNotice('This account does not have permission to manage members.', 'error');
@@ -1479,6 +1829,61 @@ async function deactivateMember(memberId) {
   }
 }
 
+async function deactivateEvent(eventId) {
+  if (!canManageEvents()) {
+    setAdminNotice('This account does not have permission to manage events.', 'error');
+    render();
+    return;
+  }
+
+  const calendarEvent = getEvents().find((entry) => entry.id === eventId);
+
+  if (!calendarEvent) {
+    setAdminNotice('That event could not be found.', 'error');
+    render();
+    return;
+  }
+
+  if (!window.confirm(`Deactivate ${calendarEvent.title}? It will be removed from the live event calendar.`)) {
+    return;
+  }
+
+  state.admin.isBusy = true;
+  setAdminNotice(`Deactivating ${calendarEvent.title}...`, 'muted');
+  render();
+
+  try {
+    const response = await supabaseFetch('events', {
+      method: 'PATCH',
+      query: new URLSearchParams({ id: `eq.${eventId}` }).toString(),
+      useSession: true,
+      headers: {
+        Prefer: 'return=representation',
+      },
+      body: {
+        is_active: false,
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error(await getSupabaseErrorMessage(response, 'event-write'));
+    }
+
+    if (state.admin.editingEventId === eventId) {
+      state.admin.editingEventId = '';
+      state.admin.eventForm = createEmptyEventForm();
+    }
+
+    await loadLiveEvents();
+    setAdminNotice(`${calendarEvent.title} was deactivated.`, 'success');
+  } catch (error) {
+    setAdminNotice(error instanceof Error ? error.message : 'Could not deactivate that event.', 'error');
+  } finally {
+    state.admin.isBusy = false;
+    render();
+  }
+}
+
 function buildMemberPayload(formData, currentMember) {
   const facebookName = cleanText(formData.get('facebook_name'));
 
@@ -1501,6 +1906,59 @@ function buildMemberPayload(formData, currentMember) {
     is_active: true,
     notes: normalizeNullableText(formData.get('notes')),
     group_role: requestedRole || 'member',
+  };
+}
+
+function buildEventPayload(formData) {
+  const title = cleanText(formData.get('title'));
+  const eventDate = cleanText(formData.get('event_date'));
+  const eventType = normalizeEventType(formData.get('event_type'));
+  const startTime = normalizeEventTime(formData.get('start_time'));
+  const endTime = normalizeEventTime(formData.get('end_time'));
+  const timezone = cleanText(formData.get('timezone')) || DEFAULT_EVENT_TIMEZONE;
+  const hostName = cleanText(formData.get('host_name'));
+  const locationText = normalizeNullableText(formData.get('location_text'));
+  const details = normalizeNullableText(formData.get('details'));
+  const eventLinkRaw = cleanText(formData.get('event_link'));
+  const eventLink = eventLinkRaw ? sanitizeUrl(eventLinkRaw) : '';
+  const matchedMember = findMemberByName(hostName);
+
+  if (!title) {
+    throw new Error('Event title is required.');
+  }
+
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(eventDate)) {
+    throw new Error('Choose a valid event date.');
+  }
+
+  if (endTime && !startTime) {
+    throw new Error('Add a start time before adding an end time.');
+  }
+
+  if (startTime && endTime && endTime <= startTime) {
+    throw new Error('End time must be later than the start time.');
+  }
+
+  if (eventLinkRaw && !eventLink) {
+    throw new Error('Event link must be a valid http or https URL.');
+  }
+
+  return {
+    title,
+    event_type: eventType,
+    event_date: eventDate,
+    start_time: startTime || null,
+    end_time: endTime || null,
+    timezone,
+    host_name: hostName || null,
+    host_member_id: matchedMember && isUuid(matchedMember.id) ? matchedMember.id : null,
+    location_text: locationText,
+    details,
+    event_link: eventLink || null,
+    yes_count: normalizeCountInput(formData.get('yes_count')),
+    maybe_count: normalizeCountInput(formData.get('maybe_count')),
+    no_count: normalizeCountInput(formData.get('no_count')),
+    is_active: true,
   };
 }
 
@@ -1567,14 +2025,57 @@ async function loadLiveMembers() {
   render();
 }
 
+async function loadLiveEvents() {
+  if (!hasSupabaseConfig) {
+    return;
+  }
+
+  try {
+    const query = new URLSearchParams({
+      select: 'id,title,event_type,event_date,start_time,end_time,timezone,host_name,host_member_id,location_text,details,event_link,yes_count,maybe_count,no_count,is_active',
+      is_active: 'eq.true',
+      order: 'event_date.asc,start_time.asc.nullslast,title.asc',
+    }).toString();
+    const response = await supabaseFetch('events', {
+      query,
+      method: 'GET',
+    });
+
+    if (!response.ok) {
+      throw new Error(await getSupabaseErrorMessage(response, 'events'));
+    }
+
+    const rows = await response.json();
+
+    state.events = normalizeSupabaseEvents(Array.isArray(rows) ? rows : []);
+    state.eventSource = 'live';
+    state.eventSourceMessage = `Loaded ${state.events.length} active events from Supabase.`;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Could not load the shared event calendar.';
+    state.events = normalizeMockEvents(mockHangouts);
+    state.eventSource = /private|policy|permission|forbidden|unauthorized/i.test(message) ? 'restricted' : 'error';
+    state.eventSourceMessage = message;
+  }
+
+  render();
+}
+
 async function getSupabaseErrorMessage(response, context = 'read') {
   if (response.status === 401 || response.status === 403) {
     if (context === 'write') {
       return 'This signed-in account does not have permission to edit members yet.';
     }
 
+    if (context === 'event-write') {
+      return 'This signed-in account does not have permission to edit events yet.';
+    }
+
     if (context === 'staff') {
       return 'Could not read staff permissions. Run supabase/07_admin_editor_auth_policies.sql after 05_member_roles_and_permissions.sql.';
+    }
+
+    if (context === 'events') {
+      return 'The events calendar is still private. Run supabase/08_events_calendar.sql when you are ready for browser reads.';
     }
 
     return 'The members table is still private. Run supabase/02_enable_member_directory_read.sql when you are ready for browser reads.';
@@ -1583,6 +2084,10 @@ async function getSupabaseErrorMessage(response, context = 'read') {
   if (response.status === 404) {
     if (context === 'staff') {
       return 'The staff permissions table is not available yet. Run supabase/05_member_roles_and_permissions.sql and then supabase/07_admin_editor_auth_policies.sql.';
+    }
+
+    if (context === 'events' || context === 'event-write') {
+      return 'The events table is not available yet. Run supabase/08_events_calendar.sql.';
     }
 
     return 'The members table is not available yet. Run the schema SQL and confirm the table exists in Supabase.';
@@ -1598,6 +2103,42 @@ async function getSupabaseErrorMessage(response, context = 'read') {
 
 function normalizeMockMembers(sourceMembers) {
   return sourceMembers.map((member, index) => normalizeMockMember(member, index));
+}
+
+function normalizeMockEvents(sourceEvents) {
+  return sourceEvents.map((calendarEvent, index) => normalizeMockEvent(calendarEvent, index));
+}
+
+function normalizeMockEvent(calendarEvent, index) {
+  const title = cleanText(calendarEvent.title) || `Event ${index + 1}`;
+  const eventType = normalizeEventType(calendarEvent.eventType || calendarEvent.type);
+  const eventDate = cleanText(calendarEvent.eventDate);
+  const startTime = normalizeEventTime(calendarEvent.startTime);
+  const endTime = normalizeEventTime(calendarEvent.endTime);
+  const timezone = cleanText(calendarEvent.timezone) || DEFAULT_EVENT_TIMEZONE;
+
+  return {
+    id: cleanText(calendarEvent.id) || `event-${index + 1}`,
+    title,
+    eventType,
+    eventTypeLabel: formatEventTypeLabel(eventType),
+    typeIndicator: getEventTypeIndicator(eventType),
+    typeIndicatorClass: getEventTypeIndicatorClass(eventType),
+    eventDate,
+    startTime,
+    endTime,
+    timezone,
+    whenLabel: cleanText(calendarEvent.when) || formatEventWhenLabel(eventDate, startTime, endTime, timezone),
+    hostName: cleanText(calendarEvent.host || calendarEvent.hostName),
+    locationText: cleanText(calendarEvent.locationText || calendarEvent.location),
+    details: cleanText(calendarEvent.details || calendarEvent.note),
+    eventLink: sanitizeUrl(cleanText(calendarEvent.eventLink || calendarEvent.link)),
+    yesCount: normalizeEventCount(calendarEvent.yes),
+    maybeCount: normalizeEventCount(calendarEvent.maybe),
+    noCount: normalizeEventCount(calendarEvent.no),
+    isActive: calendarEvent.isActive !== false,
+    sortOrder: index,
+  };
 }
 
 function normalizeMockMember(member, index) {
@@ -1632,6 +2173,41 @@ function normalizeMockMember(member, index) {
 
 function normalizeSupabaseMembers(rows) {
   return rows.map((row, index) => normalizeSupabaseMember(row, index));
+}
+
+function normalizeSupabaseEvents(rows) {
+  return rows.map((row, index) => normalizeSupabaseEvent(row, index));
+}
+
+function normalizeSupabaseEvent(row, index) {
+  const eventType = normalizeEventType(row.event_type);
+  const eventDate = cleanText(row.event_date);
+  const startTime = normalizeEventTime(row.start_time);
+  const endTime = normalizeEventTime(row.end_time);
+  const timezone = cleanText(row.timezone) || DEFAULT_EVENT_TIMEZONE;
+
+  return {
+    id: cleanText(row.id) || `event-${index + 1}`,
+    title: cleanText(row.title) || `Event ${index + 1}`,
+    eventType,
+    eventTypeLabel: formatEventTypeLabel(eventType),
+    typeIndicator: getEventTypeIndicator(eventType),
+    typeIndicatorClass: getEventTypeIndicatorClass(eventType),
+    eventDate,
+    startTime,
+    endTime,
+    timezone,
+    whenLabel: formatEventWhenLabel(eventDate, startTime, endTime, timezone),
+    hostName: cleanText(row.host_name),
+    locationText: cleanText(row.location_text),
+    details: cleanText(row.details),
+    eventLink: sanitizeUrl(cleanText(row.event_link)),
+    yesCount: normalizeEventCount(row.yes_count),
+    maybeCount: normalizeEventCount(row.maybe_count),
+    noCount: normalizeEventCount(row.no_count),
+    isActive: row.is_active !== false,
+    sortOrder: index,
+  };
 }
 
 function normalizeSupabaseMember(row, index) {
@@ -1691,6 +2267,183 @@ function getMemberMetaText({ notes, homeLink, groupRole }) {
   return '';
 }
 
+function normalizeEventType(value) {
+  const normalized = cleanText(value).toLowerCase().replace(/[-\s]+/g, '_');
+
+  switch (normalized) {
+    case 'hangout':
+    case 'party':
+    case 'wishlist':
+    case 'game':
+    case 'meetup':
+    case 'other':
+      return normalized;
+    default:
+      return 'other';
+  }
+}
+
+function formatEventTypeLabel(eventType) {
+  return EVENT_TYPE_DETAILS[normalizeEventType(eventType)]?.label || EVENT_TYPE_DETAILS.other.label;
+}
+
+function getEventTypeIndicator(eventType) {
+  return EVENT_TYPE_DETAILS[normalizeEventType(eventType)]?.indicator || EVENT_TYPE_DETAILS.other.indicator;
+}
+
+function getEventTypeIndicatorClass(eventType) {
+  return EVENT_TYPE_DETAILS[normalizeEventType(eventType)]?.className || EVENT_TYPE_DETAILS.other.className;
+}
+
+function formatEventWhenLabel(eventDate, startTime, endTime, timezone) {
+  const dateLabel = formatEventDateLabel(eventDate);
+
+  if (!dateLabel) {
+    return 'Date coming soon';
+  }
+
+  if (!startTime) {
+    return `${dateLabel} • All day`;
+  }
+
+  const startLabel = formatTimeLabel(startTime);
+  const endLabel = formatTimeLabel(endTime);
+  const timezoneLabel = cleanText(timezone);
+
+  if (endLabel) {
+    return `${dateLabel} • ${startLabel} - ${endLabel}${timezoneLabel ? ` ${timezoneLabel}` : ''}`;
+  }
+
+  return `${dateLabel} • ${startLabel}${timezoneLabel ? ` ${timezoneLabel}` : ''}`;
+}
+
+function formatEventDateLabel(eventDate) {
+  const value = cleanText(eventDate);
+
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    return '';
+  }
+
+  const [year, month, day] = value.split('-').map((part) => Number.parseInt(part, 10));
+  const date = new Date(year, month - 1, day);
+
+  return date.toLocaleString('en-US', {
+    weekday: 'short',
+    month: 'long',
+    day: 'numeric',
+  });
+}
+
+function formatTimeLabel(value) {
+  const normalized = normalizeEventTime(value);
+
+  if (!normalized) {
+    return '';
+  }
+
+  const [hours, minutes] = normalized.split(':').map((part) => Number.parseInt(part, 10));
+  const date = new Date(2000, 0, 1, hours, minutes);
+
+  return date.toLocaleString('en-US', {
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+}
+
+function normalizeEventTime(value) {
+  const text = cleanText(value);
+
+  if (!text) {
+    return '';
+  }
+
+  const match = text.match(/^(\d{1,2}):(\d{2})(?::\d{2})?$/);
+
+  if (!match) {
+    return '';
+  }
+
+  const hours = Number.parseInt(match[1], 10);
+  const minutes = Number.parseInt(match[2], 10);
+
+  if (hours < 0 || hours > 23 || minutes < 0 || minutes > 59) {
+    return '';
+  }
+
+  return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
+}
+
+function compareEvents(left, right) {
+  const leftDate = cleanText(left.eventDate) || '9999-12-31';
+  const rightDate = cleanText(right.eventDate) || '9999-12-31';
+
+  if (leftDate !== rightDate) {
+    return leftDate.localeCompare(rightDate);
+  }
+
+  const leftTime = normalizeEventTime(left.startTime) || '23:59';
+  const rightTime = normalizeEventTime(right.startTime) || '23:59';
+
+  if (leftTime !== rightTime) {
+    return leftTime.localeCompare(rightTime);
+  }
+
+  return left.title.localeCompare(right.title) || left.sortOrder - right.sortOrder;
+}
+
+function normalizeEventCount(value) {
+  const parsed = Number.parseInt(value ?? 0, 10);
+  return Number.isNaN(parsed) || parsed < 0 ? 0 : parsed;
+}
+
+function normalizeCountInput(value) {
+  const text = cleanText(value);
+
+  if (!text) {
+    return 0;
+  }
+
+  const parsed = Number.parseInt(text, 10);
+
+  if (Number.isNaN(parsed) || parsed < 0) {
+    throw new Error('Event RSVP counts must be zero or greater.');
+  }
+
+  return parsed;
+}
+
+function getDefaultEventDescription(eventType) {
+  switch (normalizeEventType(eventType)) {
+    case 'party':
+      return 'A shared party event for the group.';
+    case 'wishlist':
+      return 'A wishlist-focused event for posting, gifting, or checking updates.';
+    case 'game':
+      return 'A game session for the group.';
+    case 'meetup':
+      return 'A meet-up for the group to gather in game.';
+    case 'hangout':
+      return 'A casual hangout event for the group.';
+    case 'other':
+    default:
+      return 'A shared event for the group.';
+  }
+}
+
+function findMemberByName(value) {
+  const lookup = cleanText(value).toLowerCase();
+
+  if (!lookup) {
+    return null;
+  }
+
+  return getMembers().find((member) => {
+    return [member.facebookName, member.displayName, member.inGameName]
+      .map((name) => cleanText(name).toLowerCase())
+      .includes(lookup);
+  }) || null;
+}
+
 function normalizeGroupRole(value) {
   const normalized = cleanText(value).toLowerCase().replace(/[-\s]+/g, '_');
 
@@ -1705,6 +2458,10 @@ function normalizeGroupRole(value) {
     default:
       return 'member';
   }
+}
+
+function isUuid(value) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(cleanText(value));
 }
 
 function formatGroupRoleLabel(role) {

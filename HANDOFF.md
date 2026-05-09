@@ -9,6 +9,7 @@ Last updated: 2026-05-06
 - Backend: Supabase.
 - Local-only data: private notes, gifted status, visited status.
 - Shared live data: member directory in Supabase.
+- Shared event calendar: supported in the app and enabled after `supabase/08_events_calendar.sql` is run.
 
 ## What Is Working
 
@@ -23,8 +24,10 @@ Last updated: 2026-05-06
 - Admin Tools is staff-only and supports:
   - add member
   - edit member
+  - add birthdays through the member editor
   - deactivate member
   - change visible member roles when the signed-in staff account has role permission
+  - add and edit shared events when the signed-in staff account has event permission
 
 ## Important Files
 
@@ -37,6 +40,7 @@ Last updated: 2026-05-06
 - `supabase/05_member_roles_and_permissions.sql`: adds `group_role`, `staff_permissions`, and base write scaffolding.
 - `supabase/06_gothicka_admin_access.sql`: seeds `ywa.paint@gmail.com` as Gothicka admin.
 - `supabase/07_admin_editor_auth_policies.sql`: required for the Account/Admin Tools flow to read staff permissions and perform role-safe writes.
+- `supabase/08_events_calendar.sql`: creates the shared events table, read policies, and event-manager write policies.
 
 ## Required Supabase Run Order
 
@@ -49,6 +53,7 @@ If setting up from scratch:
 5. Run `supabase/05_member_roles_and_permissions.sql`
 6. Run `supabase/06_gothicka_admin_access.sql`
 7. Run `supabase/07_admin_editor_auth_policies.sql`
+8. Run `supabase/08_events_calendar.sql`
 
 ## Sensitive Files Kept Local
 
