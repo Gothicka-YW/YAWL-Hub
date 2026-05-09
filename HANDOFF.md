@@ -10,6 +10,7 @@ Last updated: 2026-05-06
 - Local-only data: private notes, gifted status, visited status.
 - Shared live data: member directory in Supabase.
 - Shared event calendar: supported in the app and enabled after `supabase/08_events_calendar.sql` is run.
+- Supabase CLI is initialized for this repo; use the helper scripts in `scripts/` to link the project and run top-level SQL files from the terminal.
 
 ## What Is Working
 

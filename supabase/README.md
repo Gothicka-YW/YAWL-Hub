@@ -29,3 +29,31 @@ Notes:
 - `06_gothicka_admin_access.sql` now seeds `ywa.paint@gmail.com` as Gothicka's admin staff record.
 - `07_admin_editor_auth_policies.sql` lets signed-in staff read their own permissions record and enforces safer role-aware member editing rules.
 - `08_events_calendar.sql` creates the shared event calendar for hangouts, parties, games, meet ups, and wish list events, with reads for active events and writes restricted to staff who can manage events.
+
+## Supabase CLI Workflow
+
+The repo is now initialized for Supabase CLI usage.
+
+One-time setup:
+
+1. Open a new terminal in `YAWL-Hub`.
+2. Log in to Supabase CLI: `supabase login`
+3. Link this repo to the hosted project: `./scripts/link-supabase-project.ps1 -DatabasePassword '<your-db-password>'`
+
+Apply the existing SQL files from the terminal:
+
+- Single file: `supabase db query --linked -f supabase/08_events_calendar.sql`
+- Helper script, one file: `./scripts/apply-supabase-sql.ps1 -Files supabase/08_events_calendar.sql`
+- Helper script, full ordered set: `./scripts/apply-supabase-sql.ps1 -All`
+
+Future schema changes:
+
+1. Create a migration file: `supabase migration new <change_name>`
+2. Edit the new SQL file in `supabase/migrations/`
+3. Push it to the linked project: `supabase db push`
+
+Important:
+
+- The hosted YAWL Hub database likely predates the CLI setup. Use the helper script or `supabase db query --linked -f ...` for the existing top-level SQL files.
+- Use `supabase migration new` for new changes going forward instead of adding more top-level SQL files when possible.
+- If you ever want to baseline the current hosted schema into CLI migration history, start with `supabase db pull <baseline_name>` after linking the project.
