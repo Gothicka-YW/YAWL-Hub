@@ -1,0 +1,33 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "Run YAWL Hub",
+			"type": "shell",
+			"command": "py",
+			"args": [
+				"-m",
+				"http.server",
+				"5500"
+			],
+			"isBackground": true,
+			"group": "build"
+		},
+		{
+			"label": "Apply YAWL Events SQL",
+			"type": "shell",
+			"command": "powershell",
+			"args": [
+				"-NoProfile",
+				"-ExecutionPolicy",
+				"Bypass",
+				"-File",
+				".\\scripts\\apply-supabase-sql.ps1",
+				"-Files",
+				"supabase\\08_events_calendar.sql"
+			],
+			"isBackground": false,
+			"group": "build"
+		}
+	]
+}

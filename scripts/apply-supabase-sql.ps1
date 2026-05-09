@@ -1,10 +1,10 @@
-Set-StrictMode -Version Latest
-$ErrorActionPreference = 'Stop'
-
 param(
   [string[]]$Files,
   [switch]$All
 )
+
+Set-StrictMode -Version Latest
+$ErrorActionPreference = 'Stop'
 
 function Get-SupabaseCliPath {
   $command = Get-Command supabase -ErrorAction SilentlyContinue
