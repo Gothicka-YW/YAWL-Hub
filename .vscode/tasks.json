@@ -2,6 +2,22 @@
 	"version": "2.0.0",
 	"tasks": [
 		{
+			"label": "Link YAWL Supabase Project",
+			"type": "shell",
+			"command": "powershell",
+			"args": [
+				"-NoProfile",
+				"-ExecutionPolicy",
+				"Bypass",
+				"-File",
+				".\\scripts\\link-supabase-project.ps1",
+				"-DatabasePassword",
+				"${input:yawlSupabaseDbPassword}"
+			],
+			"isBackground": false,
+			"group": "build"
+		},
+		{
 			"label": "Run YAWL Hub",
 			"type": "shell",
 			"command": "py",
@@ -28,6 +44,14 @@
 			],
 			"isBackground": false,
 			"group": "build"
+		}
+	],
+	"inputs": [
+		{
+			"id": "yawlSupabaseDbPassword",
+			"type": "promptString",
+			"description": "Supabase database password for project link",
+			"password": true
 		}
 	]
 }
