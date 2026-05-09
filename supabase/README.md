@@ -12,7 +12,8 @@ Use these files in order:
 8. Replace the placeholder email in `06_gothicka_admin_access.sql`, then run it to register Gothicka as your first admin for future authenticated editing.
 9. Run `07_admin_editor_auth_policies.sql` before using the Account section to sign in and the Admin Tools section to edit members from the app.
 10. Run `08_events_calendar.sql` before using the Events tab or Admin Tools to load and manage the shared event calendar.
-11. Create or sign in to a Supabase Auth account that uses the same email as your `staff_permissions` row.
+11. If your project already used the earlier event-type constraint, run `10_event_type_customization.sql` to switch to Birthday Party, Meet Up, Game, Special Event, and custom event labels.
+12. Create or sign in to a Supabase Auth account that uses the same email as your `staff_permissions` row.
 
 Notes:
 
@@ -28,7 +29,8 @@ Notes:
 - `05_member_roles_and_permissions.sql` adds a `group_role` column on members plus a `staff_permissions` table and authenticated write policies for future admin workflows.
 - `06_gothicka_admin_access.sql` now seeds `ywa.paint@gmail.com` as Gothicka's admin staff record.
 - `07_admin_editor_auth_policies.sql` lets signed-in staff read their own permissions record and enforces safer role-aware member editing rules.
-- `08_events_calendar.sql` creates the shared event calendar for hangouts, parties, games, meet ups, and wish list events, with reads for active events and writes restricted to staff who can manage events.
+- `08_events_calendar.sql` creates the shared event calendar for Birthday Party, Meet Up, Game, Special Event, and custom event labels, with reads for active events and writes restricted to staff who can manage events.
+- `10_event_type_customization.sql` updates older projects that still use the original event-type constraint so custom event labels can be saved.
 
 ## Supabase CLI Workflow
 
@@ -44,6 +46,7 @@ Apply the existing SQL files from the terminal:
 
 - Single file: `supabase db query --linked -f supabase/08_events_calendar.sql`
 - Helper script, one file: `./scripts/apply-supabase-sql.ps1 -Files supabase/08_events_calendar.sql`
+- Helper script, event-type update for existing projects: `./scripts/apply-supabase-sql.ps1 -Files supabase/10_event_type_customization.sql`
 - Helper script, full ordered set: `./scripts/apply-supabase-sql.ps1 -All`
 - Optional sample event seed: `./scripts/apply-supabase-sql.ps1 -Files supabase/09_seed_sample_event.sql`
 

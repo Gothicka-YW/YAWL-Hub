@@ -17,7 +17,7 @@ insert into public.events (
   is_active
 )
 select
-  'party',
+  'Special Event',
   'Garden Glow Party',
   date '2026-05-10',
   time '19:00',

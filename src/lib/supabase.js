@@ -51,6 +51,49 @@
     }
   }
 
+  function clearAuthRedirectStateFromUrl() {
+    try {
+      const url = new URL(window.location.href);
+      const authParams = [
+        'access_token',
+        'refresh_token',
+        'expires_at',
+        'expires_in',
+        'token_type',
+        'type',
+        'error',
+        'error_code',
+        'error_description',
+      ];
+
+      authParams.forEach((key) => url.searchParams.delete(key));
+      url.hash = '';
+      window.history.replaceState({}, document.title, `${url.pathname}${url.search}`);
+    } catch {
+      // Ignore URL cleanup failures.
+    }
+  }
+
+  function getAuthRedirectParams() {
+    const combinedParams = new URLSearchParams();
+    const hashParams = new URLSearchParams(String(window.location.hash || '').replace(/^#/, ''));
+    const searchParams = new URLSearchParams(window.location.search || '');
+
+    for (const [key, value] of searchParams.entries()) {
+      if (!combinedParams.has(key)) {
+        combinedParams.set(key, value);
+      }
+    }
+
+    for (const [key, value] of hashParams.entries()) {
+      if (!combinedParams.has(key)) {
+        combinedParams.set(key, value);
+      }
+    }
+
+    return combinedParams;
+  }
+
   function normalizeSession(payload) {
     const accessToken = String(payload?.access_token || '');
 
@@ -147,6 +190,92 @@
     }
   }
 
+  async function fetchCurrentUser(accessToken) {
+    if (!accessToken) {
+      return null;
+    }
+
+    let response;
+
+    try {
+      response = await authFetch('user', {
+        method: 'GET',
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+        },
+      });
+    } catch {
+      return null;
+    }
+
+    if (!response.ok) {
+      return null;
+    }
+
+    try {
+      return await response.json();
+    } catch {
+      return null;
+    }
+  }
+
+  async function consumeAuthRedirectSession() {
+    const params = getAuthRedirectParams();
+    const accessToken = String(params.get('access_token') || '');
+    const refreshToken = String(params.get('refresh_token') || '');
+    const redirectType = String(params.get('type') || '').toLowerCase();
+    const errorMessage = String(params.get('error_description') || params.get('error') || '');
+
+    if (errorMessage) {
+      clearAuthRedirectStateFromUrl();
+      return {
+        session: null,
+        type: redirectType,
+        error: errorMessage,
+      };
+    }
+
+    if (!accessToken || !refreshToken) {
+      return {
+        session: null,
+        type: redirectType,
+        error: '',
+      };
+    }
+
+    const session = saveSession(
+      normalizeSession({
+        access_token: accessToken,
+        refresh_token: refreshToken,
+        expires_at: params.get('expires_at'),
+        expires_in: params.get('expires_in'),
+      }),
+    );
+
+    if (!session) {
+      clearAuthRedirectStateFromUrl();
+      return {
+        session: null,
+        type: redirectType,
+        error: 'Could not restore the recovery session from the email link.',
+      };
+    }
+
+    const user = await fetchCurrentUser(session.accessToken);
+    const hydratedSession = saveSession({
+      ...session,
+      user: user || session.user,
+    });
+
+    clearAuthRedirectStateFromUrl();
+
+    return {
+      session: hydratedSession,
+      type: redirectType,
+      error: '',
+    };
+  }
+
   async function signInWithPassword(email, password) {
     const response = await authFetch('token', {
       method: 'POST',
@@ -185,6 +314,62 @@
       user: payload.user || null,
       needsEmailConfirmation: !session && Boolean(payload.user),
     };
+  }
+
+  async function sendPasswordResetEmail(email, redirectTo = '') {
+    const query = redirectTo
+      ? new URLSearchParams({
+          redirect_to: redirectTo,
+        }).toString()
+      : '';
+    const response = await authFetch('recover', {
+      method: 'POST',
+      query,
+      body: {
+        email,
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error(await parseErrorMessage(response));
+    }
+
+    return true;
+  }
+
+  async function updatePassword(newPassword) {
+    const session = await getValidSession();
+
+    if (!session?.accessToken) {
+      throw new Error('Open the password recovery link from your email first, then choose a new password here.');
+    }
+
+    const response = await authFetch('user', {
+      method: 'PUT',
+      headers: {
+        Authorization: `Bearer ${session.accessToken}`,
+      },
+      body: {
+        password: newPassword,
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error(await parseErrorMessage(response));
+    }
+
+    let user = null;
+
+    try {
+      user = await response.json();
+    } catch {
+      user = null;
+    }
+
+    return saveSession({
+      ...session,
+      user: user || session.user,
+    });
   }
 
   async function signOut() {
@@ -244,8 +429,11 @@
     refreshSession,
     signInWithPassword,
     signUpWithPassword,
+    consumeAuthRedirectSession,
+    sendPasswordResetEmail,
     signOut,
     supabaseFetch,
+    updatePassword,
     getSupabaseStatus,
   };
 })();

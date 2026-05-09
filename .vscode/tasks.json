@@ -40,7 +40,8 @@
 				"-File",
 				".\\scripts\\apply-supabase-sql.ps1",
 				"-Files",
-				"supabase\\08_events_calendar.sql"
+				"supabase\\08_events_calendar.sql",
+				"supabase\\10_event_type_customization.sql"
 			],
 			"isBackground": false,
 			"group": "build"

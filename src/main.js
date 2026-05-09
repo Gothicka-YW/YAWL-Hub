@@ -7,14 +7,17 @@ const {
   sections: baseSections,
 } = window.YAWL_DATA;
 const {
+  consumeAuthRedirectSession,
   getStoredSession,
   getSupabaseStatus,
   getValidSession,
   hasSupabaseConfig,
+  sendPasswordResetEmail,
   signInWithPassword,
   signOut,
   signUpWithPassword,
   supabaseFetch,
+  updatePassword,
 } = window.YAWL_SUPABASE;
 const facebookGroupUrl = sanitizeUrl(String(window.YAWL_CONFIG.facebookGroupUrl || ''));
 const facebookThreadUrl = sanitizeUrl(String(dashboard.facebookThreadUrl || ''));
@@ -50,14 +53,15 @@ const MONTH_NAMES = [
   'November',
   'December',
 ];
+const WEEKDAY_NAMES_SHORT = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const CUSTOM_EVENT_TYPE_KEY = 'custom';
 const EVENT_TYPE_DETAILS = {
-  hangout: { label: 'Hangout', indicator: 'H', className: 'event-type-icon--hangout' },
-  party: { label: 'Party', indicator: 'P', className: 'event-type-icon--party' },
-  wishlist: { label: 'Wishlist', indicator: 'W', className: 'event-type-icon--wishlist' },
+  birthday_party: { label: 'Birthday Party', indicator: 'B', className: 'event-type-icon--birthday-party' },
+  meet_up: { label: 'Meet Up', indicator: 'M', className: 'event-type-icon--meet-up' },
   game: { label: 'Game', indicator: 'G', className: 'event-type-icon--game' },
-  meetup: { label: 'Meet Up', indicator: 'M', className: 'event-type-icon--meetup' },
-  other: { label: 'Special Event', indicator: '+', className: 'event-type-icon--other' },
+  special_event: { label: 'Special Event', indicator: 'S', className: 'event-type-icon--special-event' },
 };
+const EVENT_TYPE_ORDER = ['birthday_party', 'meet_up', 'game', 'special_event'];
 const DEFAULT_EVENT_TIMEZONE = cleanText(window.YAWL_CONFIG.defaultEventTimezone || 'ET') || 'ET';
 
 const defaultPrivateState = {
@@ -188,6 +192,12 @@ app.addEventListener('submit', async (event) => {
   if (event.target.matches('[data-admin-event-form]')) {
     event.preventDefault();
     await handleAdminEventSubmit(event);
+    return;
+  }
+
+  if (event.target.matches('[data-admin-password-reset-form]')) {
+    event.preventDefault();
+    await handlePasswordResetSubmit(event);
   }
 });
 
@@ -374,10 +384,11 @@ function renderSection() {
 
 function renderDashboard() {
   const upcomingMembers = getUpcomingBirthdayMembers(3);
+  const dashboardCalendar = buildDashboardCalendarModel(getEvents());
 
   return `
     <section class="panel-grid panel-grid--dashboard">
-      <article class="panel panel--announcement panel--feature">
+      <article class="panel panel--announcement panel--feature dashboard-card dashboard-card--announcement">
         <div class="panel__heading">
           <div>
             <p class="eyebrow">Announcement</p>
@@ -394,7 +405,9 @@ function renderDashboard() {
         </div>
       </article>
 
-      <article class="stats-grid">
+      ${renderDashboardCalendarPanel(dashboardCalendar)}
+
+      <article class="stats-grid stats-grid--dashboard dashboard-card dashboard-card--stats">
         ${dashboard.stats
           .map(
             (stat) => `
@@ -407,7 +420,7 @@ function renderDashboard() {
           .join('')}
       </article>
 
-      <article class="panel">
+      <article class="panel dashboard-card dashboard-card--wishlist">
         <div class="panel__heading">
           <div>
             <p class="eyebrow">Wishlist Gallery</p>
@@ -430,11 +443,11 @@ function renderDashboard() {
 
       ${renderLaunchpadPanel()}
 
-      <article class="panel">
+      <article class="panel dashboard-card dashboard-card--upcoming">
         <div class="panel__heading">
           <div>
             <p class="eyebrow">Upcoming</p>
-            <h3>Birthdays and events</h3>
+            <h3>Upcoming birthdays</h3>
           </div>
         </div>
         <div class="stack-list">
@@ -460,6 +473,66 @@ function renderDashboard() {
         </div>
       </article>
     </section>
+  `;
+}
+
+function renderDashboardCalendarPanel(calendarModel) {
+  return `
+    <article class="panel panel--calendar dashboard-card dashboard-card--calendar">
+      <div class="panel__heading">
+        <div>
+          <p class="eyebrow">Events Calendar</p>
+          <h3>${escapeHtml(calendarModel.monthLabel)}</h3>
+        </div>
+        <span class="tag">${escapeHtml(`${calendarModel.eventCount} this month`)}</span>
+      </div>
+      <p class="panel-lead">${escapeHtml(getDashboardCalendarLeadText(calendarModel))}</p>
+      <div class="month-calendar" role="group" aria-label="${escapeHtml(`Events for ${calendarModel.monthLabel}`)}">
+        <div class="month-calendar__weekdays" aria-hidden="true">
+          ${WEEKDAY_NAMES_SHORT.map((weekday) => `<span class="month-calendar__weekday">${escapeHtml(weekday)}</span>`).join('')}
+        </div>
+        <div class="month-calendar__grid">
+          ${calendarModel.cells.map((cell) => renderDashboardCalendarCell(cell)).join('')}
+        </div>
+      </div>
+    </article>
+  `;
+}
+
+function renderDashboardCalendarCell(cell) {
+  if (cell.kind === 'blank') {
+    return '<div class="month-calendar__cell month-calendar__cell--empty" aria-hidden="true"></div>';
+  }
+
+  const primaryEvent = cell.events[0];
+  const moreCount = Math.max(0, cell.events.length - 1);
+  const cellClasses = [
+    'month-calendar__cell',
+    cell.isToday ? 'month-calendar__cell--today' : '',
+    cell.events.length ? 'month-calendar__cell--has-events' : '',
+  ]
+    .filter(Boolean)
+    .join(' ');
+  const cellTitle = buildDashboardCalendarCellTitle(cell);
+
+  return `
+    <div class="${cellClasses}"${cellTitle ? ` title="${escapeHtml(cellTitle)}"` : ''}>
+      <div class="month-calendar__day-row">
+        <span class="month-calendar__day-number">${cell.dayNumber}</span>
+        ${cell.events.length ? `<span class="month-calendar__day-count">${cell.events.length}</span>` : ''}
+      </div>
+      ${primaryEvent
+        ? `
+            <div class="month-calendar__events">
+              <div class="month-calendar__event">
+                <span class="event-type-icon month-calendar__event-icon ${primaryEvent.typeIndicatorClass}" aria-hidden="true">${escapeHtml(primaryEvent.typeIndicator)}</span>
+                <span class="month-calendar__event-title">${escapeHtml(primaryEvent.title)}</span>
+              </div>
+              ${moreCount ? `<div class="month-calendar__more">+${moreCount} more</div>` : ''}
+            </div>
+          `
+        : '<div class="month-calendar__events month-calendar__events--empty"></div>'}
+    </div>
   `;
 }
 
@@ -514,7 +587,7 @@ function renderLaunchpadPanel() {
   ].filter(Boolean);
 
   return `
-    <article class="panel panel--launchpad">
+    <article class="panel panel--launchpad dashboard-card dashboard-card--launchpad">
       <div class="panel__heading">
         <div>
           <p class="eyebrow">Launchpad</p>
@@ -705,7 +778,7 @@ function renderHangouts() {
             state.eventSource === 'loading' ? 'Loading events' : 'No events posted yet',
             state.eventSource === 'loading'
               ? 'Trying to load the shared event calendar from Supabase now.'
-              : 'No hangouts, parties, games, or meet ups have been added yet.',
+              : 'No birthday parties, meet ups, games, special events, or custom events have been added yet.',
           )}
     </section>
   `;
@@ -737,7 +810,6 @@ function renderEventCard(calendarEvent, options = {}) {
           <span>${escapeHtml(calendarEvent.locationText || 'Location coming soon')}</span>
         </div>
       </div>
-      ${calendarEvent.eventLink ? `<div class="button-row event-links"><a class="hero-button hero-button--secondary" href="${calendarEvent.eventLink}" target="_blank" rel="noreferrer">Open Event Link</a></div>` : ''}
       <div class="stats-grid stats-grid--compact event-stats">
         <div class="stat-card">
           <span>Yes</span>
@@ -857,6 +929,7 @@ function renderAccount() {
   return `
     <section class="panel-grid panel-grid--admin">
       ${renderAdminSessionPanel()}
+      ${state.admin.isRecoveryMode ? renderPasswordRecoveryPanel() : ''}
       ${renderAccountInfoPanel()}
       ${hasAdminToolsAccess() ? renderAdminLaunchPanel() : ''}
     </section>
@@ -955,7 +1028,7 @@ function renderAdminAuthPanel() {
     <article class="panel panel--announcement">
       <p class="eyebrow">Account Access</p>
       <h3>Create or sign in to your private account</h3>
-      <p class="panel-lead">Passwords stay private. Staff editing only unlocks if the signed-in email also exists in staff_permissions.</p>
+      <p class="panel-lead">Passwords stay private. Staff editing only unlocks if the signed-in email also exists in staff_permissions. Use the reset link option if you already have an account but forgot the password.</p>
       ${renderAdminNotice()}
       <form class="admin-form" data-admin-auth-form>
         <div class="form-grid">
@@ -965,12 +1038,44 @@ function renderAdminAuthPanel() {
           </label>
           <label class="field-group">
             <span>Password</span>
-            <input class="text-input" type="password" name="password" autocomplete="current-password" required />
+            <input class="text-input" type="password" name="password" autocomplete="current-password" />
+            <small class="field-help">Required for Sign In and Create Account. Leave it blank when sending a reset link.</small>
           </label>
         </div>
         <div class="button-row admin-form-actions">
           <button class="hero-button" type="submit" value="sign-in">Sign In</button>
           <button class="hero-button hero-button--secondary" type="submit" value="create-account">Create Account</button>
+          <button class="hero-button hero-button--secondary" type="submit" value="send-reset-link">Send Reset Link</button>
+        </div>
+      </form>
+    </article>
+  `;
+}
+
+function renderPasswordRecoveryPanel() {
+  const sessionEmail = cleanText(state.admin.session?.user?.email || '');
+  const recoveryMessage = sessionEmail
+    ? `Recovery link confirmed for ${sessionEmail}. Enter a new password below.`
+    : 'Open the password recovery email link, then enter your new password here.';
+
+  return `
+    <article class="panel panel--announcement">
+      <p class="eyebrow">Password Recovery</p>
+      <h3>Choose a new password</h3>
+      <p class="panel-lead">${escapeHtml(recoveryMessage)}</p>
+      <form class="admin-form" data-admin-password-reset-form>
+        <div class="form-grid">
+          <label class="field-group">
+            <span>New Password</span>
+            <input class="text-input" type="password" name="new_password" autocomplete="new-password" required />
+          </label>
+          <label class="field-group">
+            <span>Confirm Password</span>
+            <input class="text-input" type="password" name="confirm_password" autocomplete="new-password" required />
+          </label>
+        </div>
+        <div class="button-row admin-form-actions">
+          <button class="hero-button" type="submit">Save New Password</button>
         </div>
       </form>
     </article>
@@ -1016,6 +1121,10 @@ function renderAccountInfoPanel() {
         <div class="list-row list-row--compact">
           <strong>Password privacy</strong>
           <span>Admins cannot see member passwords.</span>
+        </div>
+        <div class="list-row list-row--compact">
+          <strong>Password reset</strong>
+          <span>Use Send Reset Link to get a recovery email and choose a new password.</span>
         </div>
         <div class="list-row list-row--compact">
           <strong>Member login</strong>
@@ -1138,7 +1247,7 @@ function renderAdminEventEditorPanel(currentMembers) {
         </div>
         <span class="tag">${escapeHtml(isEditing ? 'Editing live event' : 'Shared calendar')}</span>
       </div>
-      <p class="panel-lead">Add hangouts, parties, wishlist nights, games, and meet ups here. The event type controls the icon shown next to the event title.</p>
+      <p class="panel-lead">Add birthday parties, meet ups, games, special events, or a custom event type here. The event type controls the icon shown next to the event title.</p>
       <form class="admin-form" data-admin-event-form>
         <div class="form-grid">
           <label class="field-group">
@@ -1146,7 +1255,12 @@ function renderAdminEventEditorPanel(currentMembers) {
             <select class="text-input" name="event_type">
               ${renderEventTypeOptions(form.eventType)}
             </select>
-            <small class="field-help">This drives the icon indicator next to the event title.</small>
+            <small class="field-help">Pick one of the shared types or choose Custom Type to name your own.</small>
+          </label>
+          <label class="field-group">
+            <span>Custom Event Type</span>
+            <input class="text-input" type="text" name="custom_event_type" value="${escapeHtml(form.customEventType)}" placeholder="Only used when Custom Type is selected" />
+            <small class="field-help">Examples: Trivia Night, Scavenger Hunt, Decorating Contest.</small>
           </label>
           <label class="field-group">
             <span>Title</span>
@@ -1176,10 +1290,6 @@ function renderAdminEventEditorPanel(currentMembers) {
           <label class="field-group">
             <span>Location</span>
             <input class="text-input" type="text" name="location_text" value="${escapeHtml(form.locationText)}" placeholder="Party house, game room, Facebook thread, or meet-up spot" />
-          </label>
-          <label class="field-group">
-            <span>Event Link</span>
-            <input class="text-input" type="url" name="event_link" value="${escapeHtml(form.eventLink)}" placeholder="Optional Facebook thread or event link" />
           </label>
           <label class="field-group">
             <span>Yes Count</span>
@@ -1214,10 +1324,14 @@ function renderAdminEventEditorPanel(currentMembers) {
 }
 
 function renderEventTypeOptions(selectedType) {
-  return Object.keys(EVENT_TYPE_DETAILS)
+  const selectedKey = normalizeEventType(selectedType);
+
+  return [...EVENT_TYPE_ORDER, CUSTOM_EVENT_TYPE_KEY]
     .map(
       (eventType) => `
-        <option value="${eventType}" ${normalizeEventType(selectedType) === eventType ? 'selected' : ''}>${escapeHtml(formatEventTypeLabel(eventType))}</option>
+        <option value="${eventType}" ${selectedKey === eventType ? 'selected' : ''}>${escapeHtml(
+          eventType === CUSTOM_EVENT_TYPE_KEY ? 'Custom Type' : EVENT_TYPE_DETAILS[eventType].label,
+        )}</option>
       `,
     )
     .join('');
@@ -1361,6 +1475,110 @@ function getUpcomingBirthdayMembers(limit) {
   return birthdayMembers.length ? birthdayMembers.slice(0, limit) : getMembers().slice(0, limit);
 }
 
+function buildDashboardCalendarModel(events) {
+  const today = new Date();
+  const monthIndex = today.getMonth();
+  const year = today.getFullYear();
+  const firstWeekday = new Date(year, monthIndex, 1).getDay();
+  const daysInMonth = new Date(year, monthIndex + 1, 0).getDate();
+  const eventsByDay = new Map();
+  const monthEvents = events.filter((calendarEvent) => {
+    const parts = parseIsoDateParts(calendarEvent.eventDate);
+
+    if (!parts || parts.year !== year || parts.monthIndex !== monthIndex) {
+      return false;
+    }
+
+    const currentEvents = eventsByDay.get(parts.day) || [];
+    currentEvents.push(calendarEvent);
+    eventsByDay.set(parts.day, currentEvents);
+    return true;
+  });
+  const cells = [];
+
+  for (let blankIndex = 0; blankIndex < firstWeekday; blankIndex += 1) {
+    cells.push({
+      kind: 'blank',
+      key: `blank-${blankIndex}`,
+    });
+  }
+
+  for (let dayNumber = 1; dayNumber <= daysInMonth; dayNumber += 1) {
+    cells.push({
+      kind: 'day',
+      key: `day-${dayNumber}`,
+      dayNumber,
+      isToday:
+        year === today.getFullYear() &&
+        monthIndex === today.getMonth() &&
+        dayNumber === today.getDate(),
+      events: eventsByDay.get(dayNumber) || [],
+    });
+  }
+
+  while (cells.length % 7 !== 0) {
+    cells.push({
+      kind: 'blank',
+      key: `blank-end-${cells.length}`,
+    });
+  }
+
+  return {
+    monthLabel: formatMonthYearLabel(year, monthIndex),
+    eventCount: monthEvents.length,
+    totalEventCount: events.length,
+    cells,
+  };
+}
+
+function getDashboardCalendarLeadText(calendarModel) {
+  if (state.eventSource === 'loading') {
+    return 'Loading live events into this month view now.';
+  }
+
+  if (state.eventSource === 'restricted') {
+    return 'Live events are still private, so the home calendar is using demo data for now.';
+  }
+
+  if (state.eventSource === 'error') {
+    return state.eventSourceMessage || 'Live events are unavailable right now.';
+  }
+
+  if (calendarModel.eventCount > 0) {
+    return `${calendarModel.eventCount} active ${calendarModel.eventCount === 1 ? 'event is' : 'events are'} scheduled in ${calendarModel.monthLabel}.`;
+  }
+
+  if (calendarModel.totalEventCount > 0) {
+    return `No active events are scheduled in ${calendarModel.monthLabel} yet.`;
+  }
+
+  return 'No active events are on the calendar yet.';
+}
+
+function buildDashboardCalendarCellTitle(cell) {
+  if (cell.kind !== 'day') {
+    return '';
+  }
+
+  const today = new Date();
+  const dateLabel = new Date(today.getFullYear(), today.getMonth(), cell.dayNumber).toLocaleString('en-US', {
+    month: 'long',
+    day: 'numeric',
+    year: 'numeric',
+  });
+
+  if (!cell.events.length) {
+    return dateLabel;
+  }
+
+  const eventLines = cell.events.map((calendarEvent) => {
+    const startTime = formatTimeLabel(calendarEvent.startTime);
+    return startTime ? `${calendarEvent.title} at ${startTime}` : calendarEvent.title;
+  });
+
+  return [dateLabel, ...eventLines].join('\n');
+}
+
 function getDirectoryStatusText() {
   switch (state.memberSource) {
     case 'live':
@@ -1457,6 +1675,7 @@ function createDefaultAdminState() {
     isBusy: false,
     notice: '',
     noticeTone: 'muted',
+    isRecoveryMode: false,
     editingMemberId: '',
     form: createEmptyMemberForm(),
     editingEventId: '',
@@ -1481,16 +1700,18 @@ function createEmptyMemberForm(member = null) {
 }
 
 function createEmptyEventForm(calendarEvent = null) {
+  const eventTypeDetails = getEventTypeDetails(calendarEvent?.eventType);
+
   return {
     title: cleanText(calendarEvent?.title),
-    eventType: normalizeEventType(calendarEvent?.eventType),
+    eventType: eventTypeDetails.isCustom ? CUSTOM_EVENT_TYPE_KEY : eventTypeDetails.id,
+    customEventType: eventTypeDetails.isCustom ? eventTypeDetails.storedValue : '',
     eventDate: cleanText(calendarEvent?.eventDate),
     startTime: normalizeEventTime(calendarEvent?.startTime),
     endTime: normalizeEventTime(calendarEvent?.endTime),
     timezone: cleanText(calendarEvent?.timezone) || DEFAULT_EVENT_TIMEZONE,
     hostName: cleanText(calendarEvent?.hostName),
     locationText: cleanText(calendarEvent?.locationText),
-    eventLink: cleanText(calendarEvent?.eventLink),
     yesCount: String(normalizeEventCount(calendarEvent?.yesCount)),
     maybeCount: String(normalizeEventCount(calendarEvent?.maybeCount)),
     noCount: String(normalizeEventCount(calendarEvent?.noCount)),
@@ -1502,14 +1723,27 @@ async function initializeAdminSession(showRefreshMessage = false) {
   state.admin.isReady = false;
   render();
 
-  const session = await getValidSession();
+  const redirectSession = await consumeAuthRedirectSession();
+  const session = redirectSession.session || (await getValidSession());
   state.admin.session = session;
   state.admin.staffProfile = null;
+  state.admin.isRecoveryMode = Boolean(redirectSession.session && redirectSession.type === 'recovery');
 
   if (session) {
     await loadStaffProfile();
+
+    if (state.admin.isRecoveryMode) {
+      state.activeSection = 'account';
+      setAdminNotice('Recovery link confirmed. Choose a new password below.', 'success');
+    }
   } else if (showRefreshMessage) {
     setAdminNotice('No active account session was found. Sign in again to continue.', 'muted');
+  }
+
+  if (redirectSession.error) {
+    state.activeSection = 'account';
+    state.admin.isRecoveryMode = false;
+    setAdminNotice(redirectSession.error, 'error');
   }
 
   state.admin.isReady = true;
@@ -1575,18 +1809,34 @@ async function handleAdminAuthSubmit(event) {
   const password = String(formData.get('password') || '').trim();
   const mode = event.submitter?.value || 'sign-in';
 
-  if (!email || !password) {
+  if (!email) {
+    setAdminNotice('Email is required.', 'error');
+    render();
+    return;
+  }
+
+  if (mode !== 'send-reset-link' && !password) {
     setAdminNotice('Email and password are both required.', 'error');
     render();
     return;
   }
 
   state.admin.isBusy = true;
-  setAdminNotice(mode === 'create-account' ? 'Creating your account...' : 'Signing in...', 'muted');
+  setAdminNotice(
+    mode === 'create-account'
+      ? 'Creating your account...'
+      : mode === 'send-reset-link'
+        ? 'Sending your password reset link...'
+        : 'Signing in...',
+    'muted',
+  );
   render();
 
   try {
-    if (mode === 'create-account') {
+    if (mode === 'send-reset-link') {
+      await sendPasswordResetEmail(email, buildPasswordResetRedirectUrl());
+      setAdminNotice('Password reset link sent. Check your email, open the link in this browser, and then choose a new password here.', 'success');
+    } else if (mode === 'create-account') {
       const result = await signUpWithPassword(email, password);
 
       if (result.session) {
@@ -1604,6 +1854,53 @@ async function handleAdminAuthSubmit(event) {
     }
   } catch (error) {
     setAdminNotice(error instanceof Error ? error.message : 'Account sign-in failed.', 'error');
+  } finally {
+    state.admin.isBusy = false;
+    state.admin.isReady = true;
+    render();
+  }
+}
+
+async function handlePasswordResetSubmit(event) {
+  if (!state.admin.isRecoveryMode) {
+    setAdminNotice('Open the password recovery link from your email first.', 'error');
+    render();
+    return;
+  }
+
+  const formData = new FormData(event.target);
+  const newPassword = String(formData.get('new_password') || '').trim();
+  const confirmPassword = String(formData.get('confirm_password') || '').trim();
+
+  if (!newPassword || !confirmPassword) {
+    setAdminNotice('Enter and confirm your new password.', 'error');
+    render();
+    return;
+  }
+
+  if (newPassword.length < 6) {
+    setAdminNotice('Passwords must be at least 6 characters long.', 'error');
+    render();
+    return;
+  }
+
+  if (newPassword !== confirmPassword) {
+    setAdminNotice('The password confirmation does not match.', 'error');
+    render();
+    return;
+  }
+
+  state.admin.isBusy = true;
+  setAdminNotice('Saving your new password...', 'muted');
+  render();
+
+  try {
+    state.admin.session = await updatePassword(newPassword);
+    state.admin.isRecoveryMode = false;
+    await loadStaffProfile();
+    setAdminNotice('Password updated. You are signed in with your new password.', 'success');
+  } catch (error) {
+    setAdminNotice(error instanceof Error ? error.message : 'Could not update your password.', 'error');
   } finally {
     state.admin.isBusy = false;
     state.admin.isReady = true;
@@ -1912,15 +2209,13 @@ function buildMemberPayload(formData, currentMember) {
 function buildEventPayload(formData) {
   const title = cleanText(formData.get('title'));
   const eventDate = cleanText(formData.get('event_date'));
-  const eventType = normalizeEventType(formData.get('event_type'));
+  const eventType = resolveSubmittedEventType(formData.get('event_type'), formData.get('custom_event_type'));
   const startTime = normalizeEventTime(formData.get('start_time'));
   const endTime = normalizeEventTime(formData.get('end_time'));
   const timezone = cleanText(formData.get('timezone')) || DEFAULT_EVENT_TIMEZONE;
   const hostName = cleanText(formData.get('host_name'));
   const locationText = normalizeNullableText(formData.get('location_text'));
   const details = normalizeNullableText(formData.get('details'));
-  const eventLinkRaw = cleanText(formData.get('event_link'));
-  const eventLink = eventLinkRaw ? sanitizeUrl(eventLinkRaw) : '';
   const matchedMember = findMemberByName(hostName);
 
   if (!title) {
@@ -1939,10 +2234,6 @@ function buildEventPayload(formData) {
     throw new Error('End time must be later than the start time.');
   }
 
-  if (eventLinkRaw && !eventLink) {
-    throw new Error('Event link must be a valid http or https URL.');
-  }
-
   return {
     title,
     event_type: eventType,
@@ -1954,7 +2245,6 @@ function buildEventPayload(formData) {
     host_member_id: matchedMember && isUuid(matchedMember.id) ? matchedMember.id : null,
     location_text: locationText,
     details,
-    event_link: eventLink || null,
     yes_count: normalizeCountInput(formData.get('yes_count')),
     maybe_count: normalizeCountInput(formData.get('maybe_count')),
     no_count: normalizeCountInput(formData.get('no_count')),
@@ -2032,7 +2322,7 @@ async function loadLiveEvents() {
 
   try {
     const query = new URLSearchParams({
-      select: 'id,title,event_type,event_date,start_time,end_time,timezone,host_name,host_member_id,location_text,details,event_link,yes_count,maybe_count,no_count,is_active',
+      select: 'id,title,event_type,event_date,start_time,end_time,timezone,host_name,host_member_id,location_text,details,yes_count,maybe_count,no_count,is_active',
       is_active: 'eq.true',
       order: 'event_date.asc,start_time.asc.nullslast,title.asc',
     }).toString();
@@ -2111,7 +2401,7 @@ function normalizeMockEvents(sourceEvents) {
 
 function normalizeMockEvent(calendarEvent, index) {
   const title = cleanText(calendarEvent.title) || `Event ${index + 1}`;
-  const eventType = normalizeEventType(calendarEvent.eventType || calendarEvent.type);
+  const eventTypeDetails = getEventTypeDetails(calendarEvent.eventType || calendarEvent.type);
   const eventDate = cleanText(calendarEvent.eventDate);
   const startTime = normalizeEventTime(calendarEvent.startTime);
   const endTime = normalizeEventTime(calendarEvent.endTime);
@@ -2120,10 +2410,10 @@ function normalizeMockEvent(calendarEvent, index) {
   return {
     id: cleanText(calendarEvent.id) || `event-${index + 1}`,
     title,
-    eventType,
-    eventTypeLabel: formatEventTypeLabel(eventType),
-    typeIndicator: getEventTypeIndicator(eventType),
-    typeIndicatorClass: getEventTypeIndicatorClass(eventType),
+    eventType: eventTypeDetails.storedValue || EVENT_TYPE_DETAILS.special_event.label,
+    eventTypeLabel: eventTypeDetails.label,
+    typeIndicator: eventTypeDetails.indicator,
+    typeIndicatorClass: eventTypeDetails.className,
     eventDate,
     startTime,
     endTime,
@@ -2132,7 +2422,6 @@ function normalizeMockEvent(calendarEvent, index) {
     hostName: cleanText(calendarEvent.host || calendarEvent.hostName),
     locationText: cleanText(calendarEvent.locationText || calendarEvent.location),
     details: cleanText(calendarEvent.details || calendarEvent.note),
-    eventLink: sanitizeUrl(cleanText(calendarEvent.eventLink || calendarEvent.link)),
     yesCount: normalizeEventCount(calendarEvent.yes),
     maybeCount: normalizeEventCount(calendarEvent.maybe),
     noCount: normalizeEventCount(calendarEvent.no),
@@ -2180,7 +2469,7 @@ function normalizeSupabaseEvents(rows) {
 }
 
 function normalizeSupabaseEvent(row, index) {
-  const eventType = normalizeEventType(row.event_type);
+  const eventTypeDetails = getEventTypeDetails(row.event_type);
   const eventDate = cleanText(row.event_date);
   const startTime = normalizeEventTime(row.start_time);
   const endTime = normalizeEventTime(row.end_time);
@@ -2189,10 +2478,10 @@ function normalizeSupabaseEvent(row, index) {
   return {
     id: cleanText(row.id) || `event-${index + 1}`,
     title: cleanText(row.title) || `Event ${index + 1}`,
-    eventType,
-    eventTypeLabel: formatEventTypeLabel(eventType),
-    typeIndicator: getEventTypeIndicator(eventType),
-    typeIndicatorClass: getEventTypeIndicatorClass(eventType),
+    eventType: eventTypeDetails.storedValue || EVENT_TYPE_DETAILS.special_event.label,
+    eventTypeLabel: eventTypeDetails.label,
+    typeIndicator: eventTypeDetails.indicator,
+    typeIndicatorClass: eventTypeDetails.className,
     eventDate,
     startTime,
     endTime,
@@ -2201,7 +2490,6 @@ function normalizeSupabaseEvent(row, index) {
     hostName: cleanText(row.host_name),
     locationText: cleanText(row.location_text),
     details: cleanText(row.details),
-    eventLink: sanitizeUrl(cleanText(row.event_link)),
     yesCount: normalizeEventCount(row.yes_count),
     maybeCount: normalizeEventCount(row.maybe_count),
     noCount: normalizeEventCount(row.no_count),
@@ -2267,32 +2555,103 @@ function getMemberMetaText({ notes, homeLink, groupRole }) {
   return '';
 }
 
-function normalizeEventType(value) {
-  const normalized = cleanText(value).toLowerCase().replace(/[-\s]+/g, '_');
+function normalizeEventTypeToken(value) {
+  return cleanText(value)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+}
 
-  switch (normalized) {
-    case 'hangout':
-    case 'party':
-    case 'wishlist':
-    case 'game':
+function getPresetEventTypeKey(value) {
+  switch (normalizeEventTypeToken(value)) {
+    case 'birthday_party':
+      return 'birthday_party';
+    case 'meet_up':
     case 'meetup':
+    case 'hangout':
+      return 'meet_up';
+    case 'game':
+      return 'game';
+    case 'special_event':
+    case 'party':
     case 'other':
-      return normalized;
+    case 'wishlist':
+      return 'special_event';
+    case CUSTOM_EVENT_TYPE_KEY:
+      return CUSTOM_EVENT_TYPE_KEY;
+    case '':
+      return 'special_event';
     default:
-      return 'other';
+      return CUSTOM_EVENT_TYPE_KEY;
   }
 }
 
+function formatCustomEventTypeLabel(value) {
+  return cleanText(value).replace(/[_-]+/g, ' ').replace(/\s+/g, ' ');
+}
+
+function getCustomEventTypeIndicator(value) {
+  const label = formatCustomEventTypeLabel(value);
+  const match = label.match(/[A-Za-z0-9]/);
+  return match ? match[0].toUpperCase() : '*';
+}
+
+function getEventTypeDetails(value) {
+  const rawValue = cleanText(value);
+  const presetKey = getPresetEventTypeKey(rawValue);
+
+  if (presetKey !== CUSTOM_EVENT_TYPE_KEY) {
+    const preset = EVENT_TYPE_DETAILS[presetKey];
+    return {
+      id: presetKey,
+      label: preset.label,
+      indicator: preset.indicator,
+      className: preset.className,
+      isCustom: false,
+      storedValue: preset.label,
+    };
+  }
+
+  const label = formatCustomEventTypeLabel(rawValue);
+
+  return {
+    id: CUSTOM_EVENT_TYPE_KEY,
+    label: label || 'Custom Event',
+    indicator: getCustomEventTypeIndicator(label),
+    className: 'event-type-icon--custom',
+    isCustom: true,
+    storedValue: label,
+  };
+}
+
+function normalizeEventType(value) {
+  return getEventTypeDetails(value).id;
+}
+
 function formatEventTypeLabel(eventType) {
-  return EVENT_TYPE_DETAILS[normalizeEventType(eventType)]?.label || EVENT_TYPE_DETAILS.other.label;
+  return getEventTypeDetails(eventType).label;
 }
 
 function getEventTypeIndicator(eventType) {
-  return EVENT_TYPE_DETAILS[normalizeEventType(eventType)]?.indicator || EVENT_TYPE_DETAILS.other.indicator;
+  return getEventTypeDetails(eventType).indicator;
 }
 
 function getEventTypeIndicatorClass(eventType) {
-  return EVENT_TYPE_DETAILS[normalizeEventType(eventType)]?.className || EVENT_TYPE_DETAILS.other.className;
+  return getEventTypeDetails(eventType).className;
+}
+
+function resolveSubmittedEventType(selectedEventType, customEventType) {
+  if (getPresetEventTypeKey(selectedEventType) === CUSTOM_EVENT_TYPE_KEY) {
+    const customLabel = formatCustomEventTypeLabel(customEventType);
+
+    if (!customLabel) {
+      throw new Error('Add a custom event type name or choose one of the built-in event types.');
+    }
+
+    return customLabel;
+  }
+
+  return getEventTypeDetails(selectedEventType).storedValue || EVENT_TYPE_DETAILS.special_event.label;
 }
 
 function formatEventWhenLabel(eventDate, startTime, endTime, timezone) {
@@ -2332,6 +2691,36 @@ function formatEventDateLabel(eventDate) {
     month: 'long',
     day: 'numeric',
   });
+}
+
+function formatMonthYearLabel(year, monthIndex) {
+  return new Date(year, monthIndex, 1).toLocaleString('en-US', {
+    month: 'long',
+    year: 'numeric',
+  });
+}
+
+function parseIsoDateParts(value) {
+  const match = cleanText(value).match(/^(\d{4})-(\d{2})-(\d{2})$/);
+
+  if (!match) {
+    return null;
+  }
+
+  const year = Number.parseInt(match[1], 10);
+  const month = Number.parseInt(match[2], 10);
+  const day = Number.parseInt(match[3], 10);
+
+  if (!year || month < 1 || month > 12 || day < 1 || day > 31) {
+    return null;
+  }
+
+  return {
+    year,
+    month,
+    monthIndex: month - 1,
+    day,
+  };
 }
 
 function formatTimeLabel(value) {
@@ -2414,17 +2803,15 @@ function normalizeCountInput(value) {
 
 function getDefaultEventDescription(eventType) {
   switch (normalizeEventType(eventType)) {
-    case 'party':
-      return 'A shared party event for the group.';
-    case 'wishlist':
-      return 'A wishlist-focused event for posting, gifting, or checking updates.';
+    case 'birthday_party':
+      return 'A shared birthday party event for the group.';
     case 'game':
       return 'A game session for the group.';
-    case 'meetup':
+    case 'meet_up':
       return 'A meet-up for the group to gather in game.';
-    case 'hangout':
-      return 'A casual hangout event for the group.';
-    case 'other':
+    case 'special_event':
+      return 'A shared special event for the group.';
+    case CUSTOM_EVENT_TYPE_KEY:
     default:
       return 'A shared event for the group.';
   }
@@ -2604,6 +2991,26 @@ function sanitizeUrl(value) {
   } catch {
     return '';
   }
+}
+
+function buildPasswordResetRedirectUrl() {
+  const url = new URL(window.location.href);
+  const authParams = [
+    'access_token',
+    'refresh_token',
+    'expires_at',
+    'expires_in',
+    'token_type',
+    'type',
+    'error',
+    'error_code',
+    'error_description',
+  ];
+
+  authParams.forEach((key) => url.searchParams.delete(key));
+  url.hash = '';
+
+  return url.toString();
 }
 
 function escapeHtml(value) {

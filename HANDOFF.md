@@ -9,7 +9,7 @@ Last updated: 2026-05-06
 - Backend: Supabase.
 - Local-only data: private notes, gifted status, visited status.
 - Shared live data: member directory in Supabase.
-- Shared event calendar: supported in the app and enabled after `supabase/08_events_calendar.sql` is run.
+- Shared event calendar: supported in the app and enabled after `supabase/08_events_calendar.sql` is run. Existing projects that already used the older event-type constraint should also run `supabase/10_event_type_customization.sql`.
 - Supabase CLI is initialized for this repo; use the helper scripts in `scripts/` to link the project and run top-level SQL files from the terminal.
 
 ## What Is Working
@@ -42,6 +42,7 @@ Last updated: 2026-05-06
 - `supabase/06_gothicka_admin_access.sql`: seeds `ywa.paint@gmail.com` as Gothicka admin.
 - `supabase/07_admin_editor_auth_policies.sql`: required for the Account/Admin Tools flow to read staff permissions and perform role-safe writes.
 - `supabase/08_events_calendar.sql`: creates the shared events table, read policies, and event-manager write policies.
+- `supabase/10_event_type_customization.sql`: updates older event rows and constraints so Birthday Party, Meet Up, Game, Special Event, and custom event labels are supported.
 
 ## Required Supabase Run Order
 
@@ -55,6 +56,7 @@ If setting up from scratch:
 6. Run `supabase/06_gothicka_admin_access.sql`
 7. Run `supabase/07_admin_editor_auth_policies.sql`
 8. Run `supabase/08_events_calendar.sql`
+9. If the database already used the earlier event-type constraint, run `supabase/10_event_type_customization.sql`
 
 ## Sensitive Files Kept Local
 

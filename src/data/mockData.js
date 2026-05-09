@@ -97,8 +97,8 @@ window.YAWL_DATA = {
   hangouts: [
     {
       id: 'h1',
-      eventType: 'party',
-      title: 'Garden Glow Party',
+      eventType: 'Birthday Party',
+      title: 'May Birthday Garden Party',
       eventDate: '2026-05-10',
       startTime: '19:00',
       endTime: '21:30',
@@ -108,11 +108,11 @@ window.YAWL_DATA = {
       no: 1,
       host: 'Nova June',
       locationText: 'Rose Arbor Party House',
-      details: 'Dress in florals, bring a sparkle item for the raffle table, and stay for the late-night porch hop.',
+      details: 'Celebrate the month\'s birthdays with florals, raffle gifts, and a late-night porch hop.',
     },
     {
       id: 'h2',
-      eventType: 'wishlist',
+      eventType: 'Special Event',
       title: 'Sunday Wishlist Drop',
       eventDate: '2026-05-11',
       startTime: '20:00',
@@ -126,7 +126,7 @@ window.YAWL_DATA = {
     },
     {
       id: 'h3',
-      eventType: 'game',
+      eventType: 'Game',
       title: 'Hide and Seek House Games',
       eventDate: '2026-05-13',
       startTime: '18:30',
@@ -141,7 +141,7 @@ window.YAWL_DATA = {
     },
     {
       id: 'h4',
-      eventType: 'meetup',
+      eventType: 'Meet Up',
       title: 'Birthday Board Meet Up',
       eventDate: '2026-05-15',
       timezone: 'ET',
@@ -159,6 +159,7 @@ window.YAWL_DATA = {
     'Run 06_gothicka_admin_access.sql to register Gothicka as the first admin staff record.',
     'Run 07_admin_editor_auth_policies.sql so signed-in staff can read their profile and edit allowed member roles.',
     'Run 08_events_calendar.sql to create the shared event calendar and unlock live event reads and writes.',
+    'Run 10_event_type_customization.sql if your Supabase project already used the older event-type constraint and you want custom event types.',
     'Use the Account tab to create or sign in to the matching Supabase Auth account before editing members.',
     'Keep private notes and gifted or visited tracking local-only.',
   ],

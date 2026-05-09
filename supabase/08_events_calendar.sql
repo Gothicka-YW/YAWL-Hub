@@ -1,6 +1,6 @@
 create table if not exists public.events (
   id uuid primary key default gen_random_uuid(),
-  event_type text not null default 'hangout',
+  event_type text not null default 'Special Event',
   title text not null,
   event_date date not null,
   start_time time,
@@ -19,7 +19,7 @@ create table if not exists public.events (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   constraint events_type_check
-    check (event_type in ('hangout', 'party', 'wishlist', 'game', 'meetup', 'other')),
+    check (length(btrim(event_type)) > 0),
   constraint events_time_window_check
     check (end_time is null or (start_time is not null and end_time > start_time)),
   constraint events_count_check
@@ -28,7 +28,9 @@ create table if not exists public.events (
     check (event_link is null or event_link ~* '^https?://')
 );
 
-comment on table public.events is 'Shared YoAngels event calendar for hangouts, parties, games, wish list nights, and meet ups.';
+comment on table public.events is 'Shared YoAngels event calendar for Birthday Party, Meet Up, Game, Special Event, and custom event types.';
+
+comment on column public.events.event_type is 'Human-readable event type label. Built-in options are Birthday Party, Meet Up, Game, and Special Event, but custom labels are allowed.';
 
 comment on column public.events.timezone is 'Display label such as ET, PT, or UTC shown beside event times.';
 
