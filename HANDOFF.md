@@ -10,6 +10,7 @@ Last updated: 2026-05-06
 - Local-only data: private notes, gifted status, visited status.
 - Shared live data: member directory in Supabase.
 - Shared event calendar: supported in the app and enabled after `supabase/08_events_calendar.sql` is run. Existing projects that already used the older event-type constraint should also run `supabase/10_event_type_customization.sql`.
+- Weekly wishlist board now supports a live Supabase-backed current-week workflow after `supabase/11_weekly_wishlists.sql` is run.
 - Supabase CLI is initialized for this repo; use the helper scripts in `scripts/` to link the project and run top-level SQL files from the terminal.
 
 ## What Is Working
@@ -18,6 +19,8 @@ Last updated: 2026-05-06
 - Members page uses a Facebook-first row layout.
 - YoWorld name is shown as the confirmation field for gifting.
 - Member roles are supported in the UI: admin, event planner, moderator, helper, member.
+- The Wishlists tab now supports a live weekly board with up to 20 items, a hard cap of 10 out-of-store items, and member-home links pulled from the linked member record.
+- Admin Tools now includes a member-email linking form so non-staff accounts can be tied to a member row for self-service wishlist posting.
 - Account section now supports:
   - Supabase email/password sign-in
   - account creation
@@ -34,7 +37,8 @@ Last updated: 2026-05-06
 
 - `src/main.js`: main UI, live reads, account auth flow, and staff-only admin editor logic.
 - `src/lib/supabase.js`: Supabase REST + auth/session helpers.
-- `src/styles.css`: app styling, directory rows, and account/admin UI styling.
+- `src/styles.css`: app styling, directory rows, account/admin UI styling, and the live wishlist board/editor layout.
+- `Example Wish Lists/`: sample weekly wishlist images used by the current mock-backed gallery.
 - `supabase/01_members_schema.sql`: base members table.
 - `supabase/02_enable_member_directory_read.sql`: anon/authenticated read access for active members.
 - `supabase/04_backfill_birthday_parts.sql`: fills birthday month/day after CSV import.
@@ -43,6 +47,7 @@ Last updated: 2026-05-06
 - `supabase/07_admin_editor_auth_policies.sql`: required for the Account/Admin Tools flow to read staff permissions and perform role-safe writes.
 - `supabase/08_events_calendar.sql`: creates the shared events table, read policies, and event-manager write policies.
 - `supabase/10_event_type_customization.sql`: updates older event rows and constraints so Birthday Party, Meet Up, Game, Special Event, and custom event labels are supported.
+- `supabase/11_weekly_wishlists.sql`: creates member account links plus the live weekly wishlist and item tables with RLS and item-count limits.
 
 ## Required Supabase Run Order
 
@@ -57,6 +62,7 @@ If setting up from scratch:
 7. Run `supabase/07_admin_editor_auth_policies.sql`
 8. Run `supabase/08_events_calendar.sql`
 9. If the database already used the earlier event-type constraint, run `supabase/10_event_type_customization.sql`
+10. Run `supabase/11_weekly_wishlists.sql`
 
 ## Sensitive Files Kept Local
 
@@ -71,20 +77,18 @@ They contain real member names, birthdays, and/or house-link data.
 
 ## Immediate Next Step
 
-Test the Account and Admin Tools flow against the real Supabase project:
+Apply and test the live weekly wishlist flow against the real Supabase project:
 
-1. Confirm `supabase/07_admin_editor_auth_policies.sql` has been run.
+1. Confirm `supabase/11_weekly_wishlists.sql` has been run.
 2. Reload the app.
-3. Open the Account section.
-4. Sign in or create the Supabase Auth account for `ywa.paint@gmail.com`.
-5. Verify:
-   - member account sign-in works without staff access
-   - Gothicka loads with staff permissions
-   - Admin Tools appears only for staff
-   - add member works
-   - edit member works
-   - deactivate member works
-   - role change works for Gothicka
+3. Sign in as a staff account and open Admin Tools.
+4. Link at least one email to a member row.
+5. Open the Wishlists tab and verify:
+  - the current-week board loads from Supabase
+  - a linked member can save a wishlist for the current Sunday reset
+  - the 20-item cap is respected
+  - the 10 out-of-store cap is respected
+  - the home link button opens the member's saved house link
 
 ## Likely Next Improvement
 
@@ -95,4 +99,4 @@ Test the Account and Admin Tools flow against the real Supabase project:
 
 Use this prompt in a new chat if needed:
 
-"Continue work on YAWL Hub. The repo already has live Supabase member reads, Facebook-first member rows, a general Account login flow, and staff-only Admin Tools for editing members. Verify that `supabase/07_admin_editor_auth_policies.sql` is applied, then test and finish the account sign-in plus staff editing flow."
+"Continue work on YAWL Hub. The repo already has live Supabase member reads, a shared event calendar, and a live current-week wishlist system backed by `supabase/11_weekly_wishlists.sql`. Verify the new wishlist schema is applied, link a member email, and finish testing the self-service wishlist posting flow."

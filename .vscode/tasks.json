@@ -45,6 +45,22 @@
 			],
 			"isBackground": false,
 			"group": "build"
+		},
+		{
+			"label": "Apply YAWL Wishlist SQL",
+			"type": "shell",
+			"command": "powershell",
+			"args": [
+				"-NoProfile",
+				"-ExecutionPolicy",
+				"Bypass",
+				"-File",
+				".\\scripts\\apply-supabase-sql.ps1",
+				"-Files",
+				"supabase\\11_weekly_wishlists.sql"
+			],
+			"isBackground": false,
+			"group": "build"
 		}
 	],
 	"inputs": [

@@ -28,7 +28,8 @@ $orderedRepoFiles = @(
   'supabase\06_gothicka_admin_access.sql',
   'supabase\07_admin_editor_auth_policies.sql',
   'supabase\08_events_calendar.sql',
-  'supabase\10_event_type_customization.sql'
+  'supabase\10_event_type_customization.sql',
+  'supabase\11_weekly_wishlists.sql'
 )
 
 if ($All) {

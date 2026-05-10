@@ -1,0 +1,4407 @@
+const {
+  adminChecklist,
+  dashboard,
+  giveaways,
+  hangouts: mockHangouts,
+  members: mockMembers,
+  wishlists: mockWishlists,
+  sections: baseSections,
+} = window.YAWL_DATA;
+const {
+  consumeAuthRedirectSession,
+  getStoredSession,
+  getSupabaseStatus,
+  getValidSession,
+  hasSupabaseConfig,
+  sendPasswordResetEmail,
+  signInWithPassword,
+  signOut,
+  signUpWithPassword,
+  supabaseFetch,
+  updatePassword,
+} = window.YAWL_SUPABASE;
+const facebookGroupUrl = sanitizeUrl(String(window.YAWL_CONFIG.facebookGroupUrl || ''));
+const facebookThreadUrl = sanitizeUrl(String(dashboard.facebookThreadUrl || ''));
+const yoKeysWidgetUrl = sanitizeUrl(String(window.YAWL_CONFIG.yoKeysWidgetUrl || ''));
+
+const STORAGE_KEY = 'yawl-hub-private-tracker';
+const MONTH_NAME_TO_NUMBER = {
+  january: 1,
+  february: 2,
+  march: 3,
+  april: 4,
+  may: 5,
+  june: 6,
+  july: 7,
+  august: 8,
+  september: 9,
+  october: 10,
+  november: 11,
+  december: 12,
+};
+const MONTH_NAMES = [
+  '',
+  'January',
+  'February',
+  'March',
+  'April',
+  'May',
+  'June',
+  'July',
+  'August',
+  'September',
+  'October',
+  'November',
+  'December',
+];
+const WEEKDAY_NAMES_SHORT = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const CUSTOM_EVENT_TYPE_KEY = 'custom';
+const EVENT_TYPE_DETAILS = {
+  birthday_party: { label: 'Birthday Party', indicator: 'B', className: 'event-type-icon--birthday-party' },
+  meet_up: { label: 'Meet Up', indicator: 'M', className: 'event-type-icon--meet-up' },
+  game: { label: 'Game', indicator: 'G', className: 'event-type-icon--game' },
+  special_event: { label: 'Special Event', indicator: 'S', className: 'event-type-icon--special-event' },
+};
+const EVENT_TYPE_ORDER = ['birthday_party', 'meet_up', 'game', 'special_event'];
+const ADMIN_AUTH_FIELD_MAP = {
+  email: 'email',
+  password: 'password',
+};
+const ADMIN_MEMBER_FIELD_MAP = {
+  facebook_name: 'facebookName',
+  in_game_name: 'inGameName',
+  house_key: 'houseKey',
+  birthday_raw: 'birthdayRaw',
+  group_role: 'groupRole',
+  notes: 'notes',
+};
+const ADMIN_EVENT_FIELD_MAP = {
+  event_type: 'eventType',
+  custom_event_type: 'customEventType',
+  title: 'title',
+  event_date: 'eventDate',
+  start_time: 'startTime',
+  end_time: 'endTime',
+  timezone: 'timezone',
+  host_name: 'hostName',
+  location_text: 'locationText',
+  yes_count: 'yesCount',
+  maybe_count: 'maybeCount',
+  no_count: 'noCount',
+  details: 'details',
+};
+const ADMIN_WISHLIST_FIELD_MAP = {
+  member_id: 'memberId',
+  summary: 'summary',
+  status_note: 'statusNote',
+  thank_you_note: 'thankYouNote',
+};
+const ADMIN_MEMBER_LINK_FIELD_MAP = {
+  linked_email: 'email',
+  linked_member_id: 'memberId',
+};
+const ADMIN_PASSWORD_RESET_FIELD_MAP = {
+  new_password: 'newPassword',
+  confirm_password: 'confirmPassword',
+};
+const DEFAULT_EVENT_TIMEZONE = cleanText(window.YAWL_CONFIG.defaultEventTimezone || 'ET') || 'ET';
+const WISHLIST_ITEM_SLOT_COUNT = 20;
+const WISHLIST_OUT_OF_STORE_LIMIT = 10;
+const WISHLIST_TIMEZONE = 'America/New_York';
+
+const defaultPrivateState = {
+  notes: '',
+  gifted: {},
+  visited: {},
+};
+
+const initialMembers = normalizeMockMembers(mockMembers);
+const initialEvents = normalizeMockEvents(mockHangouts);
+const initialWishlists = normalizeMockWishlists(mockWishlists, initialMembers);
+
+const state = {
+  activeSection: 'dashboard',
+  privateData: loadPrivateState(),
+  members: initialMembers,
+  memberSource: hasSupabaseConfig ? 'loading' : 'mock',
+  memberSourceMessage: hasSupabaseConfig ? 'Supabase config detected. Loading live member directory...' : getSupabaseStatus(),
+  events: initialEvents,
+  eventSource: hasSupabaseConfig ? 'loading' : 'mock',
+  eventSourceMessage: hasSupabaseConfig ? 'Supabase config detected. Loading shared events...' : getSupabaseStatus(),
+  wishlists: initialWishlists,
+  wishlistSource: hasSupabaseConfig ? 'loading' : 'mock',
+  wishlistSourceMessage: hasSupabaseConfig ? 'Supabase config detected. Loading weekly wishlists...' : getSupabaseStatus(),
+  admin: createDefaultAdminState(),
+};
+
+const app = document.querySelector('#app');
+
+render();
+void loadLiveMembers();
+void loadLiveEvents();
+void loadLiveWishlists();
+void initializeAdminSession();
+
+app.addEventListener('click', async (event) => {
+  const navButton = event.target.closest('[data-section]');
+  if (navButton) {
+    state.activeSection = navButton.dataset.section;
+    render();
+    return;
+  }
+
+  const toggle = event.target.closest('[data-toggle]');
+  if (toggle) {
+    const { toggle: type, memberId } = toggle.dataset;
+    const currentValue = Boolean(state.privateData[type][memberId]);
+
+    state.privateData = {
+      ...state.privateData,
+      [type]: {
+        ...state.privateData[type],
+        [memberId]: !currentValue,
+      },
+    };
+
+    savePrivateState();
+    render();
+    return;
+  }
+
+  const actionButton = event.target.closest('[data-action]');
+  if (!actionButton) {
+    return;
+  }
+
+  const { action, memberId, eventId } = actionButton.dataset;
+
+  switch (action) {
+    case 'admin-edit-member':
+      beginEditingMember(memberId);
+      render();
+      return;
+    case 'admin-reset-member-form':
+      resetAdminEditor();
+      render();
+      return;
+    case 'admin-edit-event':
+      beginEditingEvent(eventId);
+      render();
+      return;
+    case 'admin-reset-event-form':
+      resetAdminEventEditor();
+      render();
+      return;
+    case 'wishlist-reset-form':
+      resetWishlistEditor();
+      render();
+      return;
+    case 'admin-refresh-session':
+      await initializeAdminSession(true);
+      return;
+    case 'admin-sign-out':
+      await handleAdminSignOut();
+      return;
+    case 'admin-deactivate-member':
+      await deactivateMember(memberId);
+      return;
+    case 'admin-deactivate-event':
+      await deactivateEvent(eventId);
+      return;
+    default:
+      return;
+  }
+});
+
+app.addEventListener('input', (event) => {
+  if (event.target.matches('[data-private-notes]')) {
+    state.privateData = {
+      ...state.privateData,
+      notes: event.target.value,
+    };
+
+    savePrivateState();
+    return;
+  }
+
+  syncAdminDraftField(event.target);
+});
+
+app.addEventListener('change', (event) => {
+  syncAdminDraftField(event.target);
+});
+
+app.addEventListener('submit', async (event) => {
+  if (event.target.matches('[data-admin-auth-form]')) {
+    event.preventDefault();
+    await handleAdminAuthSubmit(event);
+    return;
+  }
+
+  if (event.target.matches('[data-admin-member-form]')) {
+    event.preventDefault();
+    await handleAdminMemberSubmit(event);
+    return;
+  }
+
+  if (event.target.matches('[data-admin-event-form]')) {
+    event.preventDefault();
+    await handleAdminEventSubmit(event);
+    return;
+  }
+
+  if (event.target.matches('[data-wishlist-form]')) {
+    event.preventDefault();
+    await handleWishlistSubmit(event);
+    return;
+  }
+
+  if (event.target.matches('[data-admin-member-link-form]')) {
+    event.preventDefault();
+    await handleAdminMemberLinkSubmit(event);
+    return;
+  }
+
+  if (event.target.matches('[data-admin-password-reset-form]')) {
+    event.preventDefault();
+    await handlePasswordResetSubmit(event);
+  }
+});
+
+function render() {
+  ensureValidActiveSection();
+
+  app.innerHTML = `
+    <div class="shell">
+      <aside class="sidebar">
+        <div class="brand-block">
+          <p class="eyebrow">YoAngels Wish List</p>
+          <h1>YAWL Hub</h1>
+          <p class="brand-copy">A warm, welcoming group for sharing and celebrating each other in YoWorld.</p>
+        </div>
+
+        <div class="status-pill ${state.memberSource === 'live' ? 'status-pill--live' : ''}">
+          ${escapeHtml(getDirectoryStatusText())}
+        </div>
+
+        <nav class="nav-list" aria-label="Primary">
+          ${getSections()
+            .map(
+              (section) => `
+                <button
+                  class="nav-button ${section.id === state.activeSection ? 'nav-button--active' : ''}"
+                  type="button"
+                  data-section="${section.id}"
+                >
+                  <span>${section.label}</span>
+                </button>
+              `,
+            )
+            .join('')}
+        </nav>
+
+        <div class="quick-card">
+          <p class="quick-card__label">Current Week</p>
+          <strong>${dashboard.weekLabel}</strong>
+          ${renderSidebarLinks()}
+        </div>
+      </aside>
+
+      <main class="content">
+        ${renderHeader()}
+        ${renderSection()}
+      </main>
+    </div>
+  `;
+}
+
+function renderHeader() {
+  return `
+    <header class="hero">
+      <div>
+        <p class="eyebrow">Admin-managed v1</p>
+        <h2>${getSectionTitle()}</h2>
+      </div>
+      <div class="hero__actions">
+        ${renderHeaderLinks()}
+        <button class="hero-button hero-button--secondary" type="button" data-section="notes">Private Tracker</button>
+      </div>
+    </header>
+  `;
+}
+
+function renderSidebarLinks() {
+  const links = [];
+
+  if (facebookGroupUrl) {
+    links.push(`
+      <a class="quick-link" href="${facebookGroupUrl}" target="_blank" rel="noreferrer">
+        Open Facebook Group
+      </a>
+    `);
+  }
+
+  if (facebookThreadUrl) {
+    links.push(`
+      <a class="quick-link" href="${facebookThreadUrl}" target="_blank" rel="noreferrer">
+        Open Weekly Thread
+      </a>
+    `);
+  }
+
+  if (yoKeysWidgetUrl) {
+    links.push(`
+      <a class="quick-link" href="${yoKeysWidgetUrl}" target="_blank" rel="noreferrer">
+        Open YoKeys Widget
+      </a>
+    `);
+  }
+
+  if (!links.length) {
+    return '<p class="quick-link quick-link--muted">Add group and tool links in src/config.js.</p>';
+  }
+
+  return `<div class="quick-links">${links.join('')}</div>`;
+}
+
+function renderHeaderLinks() {
+  const links = [];
+
+  if (facebookGroupUrl) {
+    links.push(
+      `<a class="hero-button" href="${facebookGroupUrl}" target="_blank" rel="noreferrer">Facebook Group</a>`,
+    );
+  }
+
+  if (facebookThreadUrl) {
+    links.push(
+      `<a class="hero-button hero-button--secondary" href="${facebookThreadUrl}" target="_blank" rel="noreferrer">Weekly Thread</a>`,
+    );
+  }
+
+  if (yoKeysWidgetUrl) {
+    links.push(
+      `<a class="hero-button hero-button--secondary" href="${yoKeysWidgetUrl}" target="_blank" rel="noreferrer">YoKeys Widget</a>`,
+    );
+  }
+
+  return links.join('');
+}
+
+function getSectionTitle() {
+  const current = getSections().find((section) => section.id === state.activeSection);
+  return current ? current.label : 'This Week';
+}
+
+function getSections() {
+  const visibleSections = [...baseSections];
+
+  if (hasAdminToolsAccess()) {
+    visibleSections.push({ id: 'admin', label: 'Admin Tools' });
+  }
+
+  return visibleSections;
+}
+
+function ensureValidActiveSection() {
+  const visibleSectionIds = new Set(getSections().map((section) => section.id));
+
+  if (!visibleSectionIds.has(state.activeSection)) {
+    state.activeSection = visibleSectionIds.has('account') ? 'account' : 'dashboard';
+  }
+}
+
+function hasStaffProfile() {
+  return Boolean(state.admin.staffProfile?.isActive);
+}
+
+function canManageMembers() {
+  return Boolean(state.admin.staffProfile?.isActive && state.admin.staffProfile.canManageMembers);
+}
+
+function canManageEvents() {
+  return Boolean(state.admin.staffProfile?.isActive && state.admin.staffProfile.canManageEvents);
+}
+
+function canManageWishlists() {
+  return canManageMembers();
+}
+
+function hasLinkedWishlistAccess() {
+  return Boolean(getLinkedWishlistMember());
+}
+
+function hasAdminToolsAccess() {
+  return canManageMembers() || canManageEvents();
+}
+
+function renderSection() {
+  switch (state.activeSection) {
+    case 'account':
+      return renderAccount();
+    case 'wishlists':
+      return renderWishlists();
+    case 'members':
+      return renderMembers();
+    case 'birthdays':
+      return renderBirthdays();
+    case 'giveaways':
+      return renderGiveaways();
+    case 'hangouts':
+      return renderHangouts();
+    case 'notes':
+      return renderNotes();
+    case 'admin':
+      return renderAdmin();
+    case 'dashboard':
+    default:
+      return renderDashboard();
+  }
+}
+
+function renderDashboard() {
+  const upcomingMembers = getUpcomingBirthdayMembers(3);
+  const dashboardCalendar = buildDashboardCalendarModel(getEvents());
+  const featuredWishlists = getActiveWishlists(3);
+  const totalWishlists = getActiveWishlists().length;
+  const dashboardStats = getDashboardStats(upcomingMembers);
+
+  return `
+    <section class="panel-grid panel-grid--dashboard">
+      <article class="panel panel--announcement panel--feature dashboard-card dashboard-card--announcement">
+        <div class="panel__heading">
+          <div>
+            <p class="eyebrow">Announcement</p>
+            <h3>Weekly headquarters</h3>
+          </div>
+          <span class="tag">${dashboard.weekLabel}</span>
+        </div>
+        <p class="panel-lead">${dashboard.announcement}</p>
+        <div class="button-row">
+          ${facebookGroupUrl ? `<a class="hero-button" href="${facebookGroupUrl}" target="_blank" rel="noreferrer">Open Group</a>` : ''}
+          ${facebookThreadUrl ? `<a class="hero-button hero-button--secondary" href="${facebookThreadUrl}" target="_blank" rel="noreferrer">Weekly Thread</a>` : ''}
+          ${yoKeysWidgetUrl ? `<a class="hero-button hero-button--secondary" href="${yoKeysWidgetUrl}" target="_blank" rel="noreferrer">Launch YoKeys</a>` : ''}
+          <button class="hero-button hero-button--secondary" type="button" data-section="notes">Private Tracker</button>
+        </div>
+      </article>
+
+      ${renderDashboardCalendarPanel(dashboardCalendar)}
+
+      <article class="stats-grid stats-grid--dashboard dashboard-card dashboard-card--stats">
+        ${dashboardStats
+          .map(
+            (stat) => `
+              <div class="stat-card">
+                <span>${stat.label}</span>
+                <strong>${stat.value}</strong>
+              </div>
+            `,
+          )
+          .join('')}
+      </article>
+
+      <article class="panel dashboard-card dashboard-card--wishlist">
+        <div class="panel__heading">
+          <div>
+            <p class="eyebrow">Wishlist Board</p>
+            <h3>Active this week</h3>
+          </div>
+          <span class="tag">${escapeHtml(`${totalWishlists} active`)}</span>
+        </div>
+        <p class="panel-lead">Weekly wishlists reset every Sunday ET. Each board supports up to 20 items, with at most 10 marked out of store, plus a quick home link pulled from the member record.</p>
+        <div class="wish-grid wish-grid--dashboard">
+          ${featuredWishlists.length
+            ? featuredWishlists.map((wishlist) => renderWishlistPreviewCard(wishlist)).join('')
+            : `
+                <div class="wish-card">
+                  <p class="wish-card__name">No active wishlists yet</p>
+                  <p>Post the first weekly wishlist to start the board.</p>
+                </div>
+              `}
+        </div>
+        <div class="button-row">
+          <button class="hero-button hero-button--secondary" type="button" data-section="wishlists">Open Wishlist Board</button>
+        </div>
+      </article>
+
+      ${renderLaunchpadPanel()}
+
+      <article class="panel dashboard-card dashboard-card--upcoming">
+        <div class="panel__heading">
+          <div>
+            <p class="eyebrow">Upcoming</p>
+            <h3>Upcoming birthdays</h3>
+          </div>
+        </div>
+        <div class="stack-list">
+          ${upcomingMembers.length
+            ? upcomingMembers
+                .map(
+                  (member) => `
+                    <div class="list-row">
+                      <div>
+                        <strong>${escapeHtml(member.displayName)}</strong>
+                        <span>${escapeHtml(member.secondaryName || member.statusText)}</span>
+                      </div>
+                      <span>${escapeHtml(member.birthdayLabel)}</span>
+                    </div>
+                  `,
+                )
+                .join('')
+            : `
+                <div class="list-row list-row--compact">
+                  <span>${escapeHtml(state.memberSource === 'loading' ? 'Loading live member birthdays...' : 'No member birthdays available yet.')}</span>
+                </div>
+              `}
+        </div>
+      </article>
+    </section>
+  `;
+}
+
+function renderWishlists() {
+  ensureWishlistEditorState();
+
+  const wishlists = getActiveWishlists();
+  const editorState = getWishlistEditorState();
+
+  return `
+    <section class="panel-grid panel-grid--directory-page">
+      ${renderWishlistSourceNotice()}
+      <article class="panel panel--announcement panel--span-full">
+        <div class="panel__heading">
+          <div>
+            <p class="eyebrow">Wishlist Board</p>
+            <h3>Active wishlists of the week</h3>
+          </div>
+          <span class="tag">${escapeHtml(`${wishlists.length} active`)}</span>
+        </div>
+        <p class="panel-lead">Use this board like a clean weekly wishlist thread. Each post can carry up to ${WISHLIST_ITEM_SLOT_COUNT} items, with no more than ${WISHLIST_OUT_OF_STORE_LIMIT} out-of-store requests, and the home link is pulled automatically from the linked member record.</p>
+      </article>
+
+      ${renderWishlistComposer(editorState)}
+
+      <article class="panel panel--directory panel--span-full">
+        <div class="panel__heading">
+          <div>
+            <p class="eyebrow">This Week</p>
+            <h3>Who has an active wishlist</h3>
+          </div>
+          <span class="tag">${escapeHtml(`${wishlists.length} boards live`)}</span>
+        </div>
+        <div class="wishlist-board">
+          ${wishlists.length
+            ? wishlists.map((wishlist) => renderWishlistCard(wishlist)).join('')
+            : `
+                <div class="list-row list-row--compact">
+                  <span>No wishlists are active this week yet.</span>
+                </div>
+              `}
+        </div>
+      </article>
+    </section>
+  `;
+}
+
+function renderWishlistPreviewCard(wishlist) {
+  const previewItems = wishlist.items.filter((item) => item.imageUrl).slice(0, 4);
+
+  return `
+    <article class="wish-card wish-card--preview">
+      <div class="wish-card__media">
+        ${previewItems.length ? renderWishlistPreviewMedia(previewItems, wishlist.memberName) : renderWishlistFallbackMedia(wishlist, 'wish-card__image')}
+      </div>
+      <div class="wish-card__heading">
+        <p class="wish-card__name">${escapeHtml(wishlist.memberName)}</p>
+        <span class="tag">${escapeHtml(`${wishlist.totalItems} items`)}</span>
+      </div>
+      <p>${escapeHtml(wishlist.statusNote || wishlist.summary)}</p>
+      <div class="wishlist-counts">
+        ${renderWishlistCountTag(`${wishlist.outOfStoreCount} out of store`, wishlist.outOfStoreCount > 0 ? 'wishlist-count--warning' : '')}
+        ${renderWishlistCountTag(`${wishlist.receivedCount} received`, wishlist.receivedCount > 0 ? 'wishlist-count--success' : '')}
+      </div>
+    </article>
+  `;
+}
+
+function renderWishlistCard(wishlist) {
+  const thanksPeople = [...new Set([...(wishlist.thankYouTo || []), ...wishlist.items.map((item) => item.receivedFrom).filter(Boolean)])];
+
+  return `
+    <article class="wishlist-card">
+      <div class="wishlist-card__media wishlist-card__media--grid">
+        ${wishlist.items.length ? renderWishlistItemsGrid(wishlist.items, wishlist.memberName) : renderWishlistFallbackMedia(wishlist, 'wishlist-card__image')}
+      </div>
+      <div class="wishlist-card__body">
+        <div class="panel__heading">
+          <div>
+            <p class="eyebrow">${escapeHtml(wishlist.weekLabel)}</p>
+            <h3>${escapeHtml(wishlist.memberName)}</h3>
+          </div>
+          <span class="tag">${escapeHtml(wishlist.lastUpdatedLabel)}</span>
+        </div>
+        <p class="panel-lead">${escapeHtml(wishlist.summary)}</p>
+        <div class="wishlist-counts wishlist-counts--board">
+          ${renderWishlistCountTag(`${wishlist.totalItems}/${WISHLIST_ITEM_SLOT_COUNT} items`, '')}
+          ${renderWishlistCountTag(`${wishlist.outOfStoreCount}/${WISHLIST_OUT_OF_STORE_LIMIT} out of store`, wishlist.outOfStoreCount > 0 ? 'wishlist-count--warning' : '')}
+          ${renderWishlistCountTag(`${wishlist.receivedCount} received`, wishlist.receivedCount > 0 ? 'wishlist-count--success' : '')}
+        </div>
+        <div class="stack-list">
+          <div class="list-row list-row--compact">
+            <strong>Status</strong>
+            <span>${escapeHtml(wishlist.statusNote)}</span>
+          </div>
+          <div class="list-row list-row--compact">
+            <strong>Thanks</strong>
+            <span>${escapeHtml(wishlist.thankYouSummary)}</span>
+          </div>
+        </div>
+        ${wishlist.thankYouNote ? `<p class="wishlist-note"><strong>Thank-you note:</strong> ${escapeHtml(wishlist.thankYouNote)}</p>` : ''}
+        ${thanksPeople.length
+          ? `<div class="wishlist-thanks">${thanksPeople.map((name) => `<span class="tag tag--role-helper">${escapeHtml(name)}</span>`).join('')}</div>`
+          : ''}
+        <div class="button-row">
+          ${wishlist.homeLink ? `<a class="hero-button hero-button--secondary" href="${wishlist.homeLink}" target="_blank" rel="noreferrer">Open Home Link</a>` : ''}
+          ${wishlist.imageUrl ? `<a class="hero-button hero-button--secondary" href="${wishlist.imageUrl}" target="_blank" rel="noreferrer">Open Board Image</a>` : ''}
+        </div>
+      </div>
+    </article>
+  `;
+}
+
+function renderWishlistComposer(editorState) {
+  if (!state.admin.session) {
+    return `
+      <article class="panel panel--announcement panel--span-full">
+        <div class="panel__heading">
+          <div>
+            <p class="eyebrow">Post Your Wishlist</p>
+            <h3>Sign in to manage this week's board</h3>
+          </div>
+        </div>
+        <p class="panel-lead">Wishlist posting uses your YAWL Hub account. Staff can post for any member, and linked member accounts can manage only their own current-week wishlist.</p>
+        <div class="button-row">
+          <button class="hero-button" type="button" data-section="account">Open Account</button>
+        </div>
+      </article>
+    `;
+  }
+
+  if (!editorState.canEdit) {
+    return `
+      <article class="panel panel--announcement panel--span-full">
+        <div class="panel__heading">
+          <div>
+            <p class="eyebrow">Post Your Wishlist</p>
+            <h3>This login is not linked to a member yet</h3>
+          </div>
+        </div>
+        <p class="panel-lead">An admin needs to link this email to a member record before the app can auto-pull your home link and save your weekly wishlist safely.</p>
+        <div class="button-row">
+          <button class="hero-button hero-button--secondary" type="button" data-section="account">Open Account</button>
+        </div>
+      </article>
+    `;
+  }
+
+  const form = state.admin.wishlistForm;
+  const selectedMember = editorState.selectedMember;
+  const itemSummary = summarizeWishlistItems(form.items);
+  const isEditingLiveBoard = Boolean(editorState.currentWishlist?.id);
+
+  return `
+    <article class="panel panel--span-full">
+      <div class="panel__heading">
+        <div>
+          <p class="eyebrow">Post Your Wishlist</p>
+          <h3>${escapeHtml(isEditingLiveBoard ? 'Update this week\'s wishlist' : 'Create this week\'s wishlist')}</h3>
+        </div>
+        <span class="tag">${escapeHtml(formatWishlistWeekLabel(getCurrentWishlistWeekStartIso()))}</span>
+      </div>
+      <p class="panel-lead">Use item image links the same way you would build a YoWorld.info-style board. Each weekly wishlist can carry up to ${WISHLIST_ITEM_SLOT_COUNT} items, with at most ${WISHLIST_OUT_OF_STORE_LIMIT} marked out of store.</p>
+      <form class="admin-form" data-wishlist-form>
+        <div class="form-grid">
+          ${canManageWishlists()
+            ? `
+                <label class="field-group">
+                  <span>Member</span>
+                  <select class="text-input" name="member_id">
+                    ${renderWishlistMemberOptions(editorState.availableMembers, form.memberId)}
+                  </select>
+                </label>
+              `
+            : `<input type="hidden" name="member_id" value="${escapeHtml(form.memberId)}" />`}
+          <label class="field-group field-group--wide">
+            <span>Wishlist Summary</span>
+            <textarea name="summary" class="admin-textarea" placeholder="What vibe or item focus does this week's wishlist have?">${escapeHtml(form.summary)}</textarea>
+          </label>
+          <label class="field-group field-group--wide">
+            <span>Status Note</span>
+            <textarea name="status_note" class="admin-textarea" placeholder="Example: Updated after evening gifts and porch visits.">${escapeHtml(form.statusNote)}</textarea>
+          </label>
+          <label class="field-group field-group--wide">
+            <span>Thank-you Note</span>
+            <textarea name="thank_you_note" class="admin-textarea" placeholder="Optional public thank-you note for gifters.">${escapeHtml(form.thankYouNote)}</textarea>
+          </label>
+        </div>
+        <div class="wishlist-editor-toolbar">
+          <div class="wishlist-counts wishlist-counts--board">
+            ${renderWishlistCountTag(`${itemSummary.total}/${WISHLIST_ITEM_SLOT_COUNT} items`, '')}
+            ${renderWishlistCountTag(`${itemSummary.outOfStore}/${WISHLIST_OUT_OF_STORE_LIMIT} out of store`, itemSummary.outOfStore > 0 ? 'wishlist-count--warning' : '')}
+            ${renderWishlistCountTag(`${itemSummary.received} received`, itemSummary.received > 0 ? 'wishlist-count--success' : '')}
+          </div>
+          ${selectedMember?.homeLink ? `<a class="hero-button hero-button--secondary" href="${selectedMember.homeLink}" target="_blank" rel="noreferrer">Open ${escapeHtml(selectedMember.displayName)}'s Home</a>` : ''}
+        </div>
+        <div class="wishlist-editor-grid">
+          ${form.items.map((item, index) => renderWishlistItemFieldset(item, index)).join('')}
+        </div>
+        <div class="button-row admin-form-actions">
+          <button class="hero-button" type="submit">${escapeHtml(isEditingLiveBoard ? 'Save This Week\'s Wishlist' : 'Post This Week\'s Wishlist')}</button>
+          <button class="hero-button hero-button--secondary" type="button" data-action="wishlist-reset-form">Reset Form</button>
+        </div>
+      </form>
+      <p class="muted">Home links come from the member directory automatically. If a member's house key changes, update it in Members and the next wishlist save will use the new link.</p>
+    </article>
+  `;
+}
+
+function renderWishlistItemFieldset(item, index) {
+  return `
+    <section class="wishlist-slot">
+      <div class="wishlist-slot__heading">
+        <strong>Item ${index + 1}</strong>
+        <span class="tag ${item.availabilityStatus === 'out_of_store' ? 'tag--role-event' : 'tag--muted'}">${escapeHtml(formatWishlistAvailabilityLabel(item.availabilityStatus))}</span>
+      </div>
+      <div class="wishlist-slot__grid">
+        <label class="field-group field-group--wide">
+          <span>Item Name</span>
+          <input class="text-input" type="text" name="item_name_${index}" value="${escapeHtml(item.name)}" placeholder="Victorian wall shelf" />
+        </label>
+        <label class="field-group field-group--wide">
+          <span>Item Image URL</span>
+          <input class="text-input" type="url" name="item_image_url_${index}" value="${escapeHtml(item.imageUrl)}" placeholder="Paste the item image URL" />
+        </label>
+        <label class="field-group field-group--wide">
+          <span>Item Source Link</span>
+          <input class="text-input" type="url" name="item_source_url_${index}" value="${escapeHtml(item.sourceUrl)}" placeholder="Optional YoWorld.info item link" />
+        </label>
+        <label class="field-group">
+          <span>Availability</span>
+          <select class="text-input" name="availability_status_${index}">
+            ${renderWishlistAvailabilityOptions(item.availabilityStatus)}
+          </select>
+        </label>
+        <label class="field-group">
+          <span>Received From</span>
+          <input class="text-input" type="text" name="received_from_${index}" value="${escapeHtml(item.receivedFrom)}" placeholder="Optional gifter name" />
+        </label>
+        <label class="field-group field-group--checkbox">
+          <span>Gifted</span>
+          <input type="checkbox" name="is_received_${index}" ${item.isReceived ? 'checked' : ''} />
+        </label>
+      </div>
+    </section>
+  `;
+}
+
+function renderWishlistPreviewMedia(items, memberName) {
+  return `
+    <div class="wish-thumb-grid" aria-label="${escapeHtml(`${memberName} wishlist item preview`)}">
+      ${items
+        .map(
+          (item) => `
+            <div class="wish-thumb-grid__item">
+              <img class="wish-thumb-grid__image" src="${item.imageUrl}" alt="${escapeHtml(item.name || `${memberName} wishlist item`)}" loading="lazy" />
+            </div>
+          `,
+        )
+        .join('')}
+    </div>
+  `;
+}
+
+function renderWishlistFallbackMedia(wishlist, imageClassName) {
+  if (wishlist.imageUrl) {
+    return `<img class="${imageClassName}" src="${wishlist.imageUrl}" alt="${escapeHtml(`${wishlist.memberName} weekly wishlist`)}" loading="lazy" />`;
+  }
+
+  return `
+    <div class="wishlist-card__placeholder">
+      <strong>${escapeHtml(wishlist.memberName)}</strong>
+      <span>${escapeHtml(wishlist.totalItems ? `${wishlist.totalItems} wishlist items` : 'No item images yet')}</span>
+    </div>
+  `;
+}
+
+function renderWishlistItemsGrid(items, memberName) {
+  return `
+    <div class="wishlist-items-grid" aria-label="${escapeHtml(`${memberName} wishlist items`)}">
+      ${items.map((item) => renderWishlistItemCard(item)).join('')}
+    </div>
+  `;
+}
+
+function renderWishlistItemCard(item) {
+  const cardBody = `
+    <div class="wishlist-item__media">
+      ${item.imageUrl
+        ? `<img class="wishlist-item__image" src="${item.imageUrl}" alt="${escapeHtml(item.name || 'Wishlist item')}" loading="lazy" />`
+        : '<div class="wishlist-item__placeholder">Image pending</div>'}
+    </div>
+    <div class="wishlist-item__body">
+      <strong class="wishlist-item__name">${escapeHtml(item.name || 'Wishlist item')}</strong>
+      <div class="wishlist-item__tags">
+        <span class="tag ${item.availabilityStatus === 'out_of_store' ? 'tag--role-event' : 'tag--muted'}">${escapeHtml(formatWishlistAvailabilityLabel(item.availabilityStatus))}</span>
+        ${item.isReceived ? `<span class="tag tag--role-helper">${escapeHtml(item.receivedFrom ? `Gifted by ${item.receivedFrom}` : 'Gifted')}</span>` : ''}
+      </div>
+    </div>
+  `;
+
+  if (item.sourceUrl) {
+    return `<a class="wishlist-item ${item.isReceived ? 'wishlist-item--received' : ''}" href="${item.sourceUrl}" target="_blank" rel="noreferrer">${cardBody}</a>`;
+  }
+
+  return `<div class="wishlist-item ${item.isReceived ? 'wishlist-item--received' : ''}">${cardBody}</div>`;
+}
+
+function renderWishlistCountTag(label, className) {
+  return `<span class="tag wishlist-count ${className}">${escapeHtml(label)}</span>`;
+}
+
+function renderWishlistMemberOptions(members, selectedMemberId) {
+  return members
+    .map(
+      (member) => `
+        <option value="${escapeHtml(member.id)}" ${member.id === selectedMemberId ? 'selected' : ''}>${escapeHtml(member.displayName)}</option>
+      `,
+    )
+    .join('');
+}
+
+function renderWishlistAvailabilityOptions(selectedValue) {
+  return ['in_store', 'out_of_store']
+    .map(
+      (value) => `
+        <option value="${value}" ${normalizeWishlistAvailability(value) === normalizeWishlistAvailability(selectedValue) ? 'selected' : ''}>${escapeHtml(formatWishlistAvailabilityLabel(value))}</option>
+      `,
+    )
+    .join('');
+}
+
+function renderDashboardCalendarPanel(calendarModel) {
+  return `
+    <article class="panel panel--calendar dashboard-card dashboard-card--calendar">
+      <div class="panel__heading">
+        <div>
+          <p class="eyebrow">Events Calendar</p>
+          <h3>${escapeHtml(calendarModel.monthLabel)}</h3>
+        </div>
+        <span class="tag">${escapeHtml(`${calendarModel.eventCount} this month`)}</span>
+      </div>
+      <p class="panel-lead">${escapeHtml(getDashboardCalendarLeadText(calendarModel))}</p>
+      <div class="month-calendar" role="group" aria-label="${escapeHtml(`Events for ${calendarModel.monthLabel}`)}">
+        <div class="month-calendar__weekdays" aria-hidden="true">
+          ${WEEKDAY_NAMES_SHORT.map((weekday) => `<span class="month-calendar__weekday">${escapeHtml(weekday)}</span>`).join('')}
+        </div>
+        <div class="month-calendar__grid">
+          ${calendarModel.cells.map((cell) => renderDashboardCalendarCell(cell)).join('')}
+        </div>
+      </div>
+    </article>
+  `;
+}
+
+function renderDashboardCalendarCell(cell) {
+  if (cell.kind === 'blank') {
+    return '<div class="month-calendar__cell month-calendar__cell--empty" aria-hidden="true"></div>';
+  }
+
+  const primaryEvent = cell.events[0];
+  const moreCount = Math.max(0, cell.events.length - 1);
+  const cellClasses = [
+    'month-calendar__cell',
+    cell.isToday ? 'month-calendar__cell--today' : '',
+    cell.events.length ? 'month-calendar__cell--has-events' : '',
+  ]
+    .filter(Boolean)
+    .join(' ');
+  const cellTitle = buildDashboardCalendarCellTitle(cell);
+
+  return `
+    <div class="${cellClasses}"${cellTitle ? ` title="${escapeHtml(cellTitle)}"` : ''}>
+      <div class="month-calendar__day-row">
+        <span class="month-calendar__day-number">${cell.dayNumber}</span>
+        ${cell.events.length ? `<span class="month-calendar__day-count">${cell.events.length}</span>` : ''}
+      </div>
+      ${primaryEvent
+        ? `
+            <div class="month-calendar__events">
+              <div class="month-calendar__event">
+                <span class="event-type-icon month-calendar__event-icon ${primaryEvent.typeIndicatorClass}" aria-hidden="true">${escapeHtml(primaryEvent.typeIndicator)}</span>
+                <span class="month-calendar__event-title">${escapeHtml(primaryEvent.title)}</span>
+              </div>
+              ${moreCount ? `<div class="month-calendar__more">+${moreCount} more</div>` : ''}
+            </div>
+          `
+        : '<div class="month-calendar__events month-calendar__events--empty"></div>'}
+    </div>
+  `;
+}
+
+function renderLaunchpadPanel() {
+  const tiles = [
+    facebookGroupUrl
+      ? renderLinkLaunchTile(
+          'Community',
+          'YoAngels Group',
+          'Jump back into the private Facebook group for weekly posts, replies, and announcements.',
+          facebookGroupUrl,
+          'Open group',
+          '',
+        )
+      : '',
+    renderSectionLaunchTile(
+      'Directory',
+      'Member Homes',
+      'Browse home links quickly, then jump into your gifting route without leaving the main hub.',
+      'members',
+      'View members',
+      '',
+    ),
+    renderSectionLaunchTile(
+      'Private',
+      'Gift Tracker',
+      'Mark visits, keep private notes, and stay organized without sharing personal tracking data.',
+      'notes',
+      'Open notes',
+      '',
+    ),
+    yoKeysWidgetUrl
+      ? renderLinkLaunchTile(
+          'Standalone Tool',
+          'YoKeys Widget',
+          'Keep personal keys and saved friend homes in a dedicated space outside the hub.',
+          yoKeysWidgetUrl,
+          'Open widget',
+          'launch-tile--accent',
+        )
+      : '',
+    facebookThreadUrl
+      ? renderLinkLaunchTile(
+          'Current Week',
+          'Weekly Thread',
+          'Open the active weekly post when you want the latest comments without hunting for it.',
+          facebookThreadUrl,
+          'Open thread',
+          '',
+        )
+      : '',
+  ].filter(Boolean);
+
+  return `
+    <article class="panel panel--launchpad dashboard-card dashboard-card--launchpad">
+      <div class="panel__heading">
+        <div>
+          <p class="eyebrow">Launchpad</p>
+          <h3>Tools and shortcuts</h3>
+        </div>
+      </div>
+      <div class="launch-grid">
+        ${tiles.join('')}
+      </div>
+    </article>
+  `;
+}
+
+function getDashboardStats(upcomingMembers) {
+  const openGiveaways = giveaways.filter((item) => !cleanText(item.claimedBy)).length;
+
+  return [
+    { label: 'Wishlists active', value: String(getActiveWishlists().length) },
+    { label: 'Birthdays soon', value: String(upcomingMembers.length) },
+    { label: 'Open giveaways', value: String(openGiveaways) },
+    { label: 'Upcoming events', value: String(getEvents().length) },
+  ];
+}
+
+function renderLinkLaunchTile(eyebrow, title, text, href, footer, modifier) {
+  return `
+    <a class="launch-tile ${modifier}" href="${href}" target="_blank" rel="noreferrer">
+      <span class="launch-tile__eyebrow">${eyebrow}</span>
+      <strong class="launch-tile__title">${title}</strong>
+      <span class="launch-tile__body">${text}</span>
+      <span class="launch-tile__footer">${footer}</span>
+    </a>
+  `;
+}
+
+function renderSectionLaunchTile(eyebrow, title, text, sectionId, footer, modifier) {
+  return `
+    <button class="launch-tile ${modifier}" type="button" data-section="${sectionId}">
+      <span class="launch-tile__eyebrow">${eyebrow}</span>
+      <strong class="launch-tile__title">${title}</strong>
+      <span class="launch-tile__body">${text}</span>
+      <span class="launch-tile__footer">${footer}</span>
+    </button>
+  `;
+}
+
+function renderMembers() {
+  const currentMembers = getMembers();
+
+  return `
+    <section class="panel-grid panel-grid--directory-page">
+      ${renderDirectoryNotice()}
+      ${currentMembers.length
+        ? renderMemberDirectoryPanel(currentMembers)
+        : renderEmptyMemberPanel(
+            state.memberSource === 'loading' ? 'Loading members' : 'No members yet',
+            state.memberSource === 'loading'
+              ? 'Trying to load the live member directory from Supabase.'
+              : 'Import members into Supabase or keep using the mock data until the directory is ready.',
+          )}
+    </section>
+  `;
+}
+
+function renderMemberDirectoryPanel(currentMembers) {
+  return `
+    <article class="panel panel--directory">
+      <div class="panel__heading">
+        <div>
+          <p class="eyebrow">Directory</p>
+          <h3>Facebook-first member list</h3>
+        </div>
+        <span class="tag">${escapeHtml(`${currentMembers.length} active members`)}</span>
+      </div>
+      <p class="panel-lead">Facebook names lead each row. Use the YoWorld name as confirmation before sending gifts.</p>
+      <div class="directory-list" role="list">
+        ${renderMemberDirectoryHeader()}
+        ${currentMembers.map((member) => renderMemberDirectoryRow(member)).join('')}
+      </div>
+    </article>
+  `;
+}
+
+function renderMemberDirectoryHeader() {
+  return `
+    <div class="directory-row directory-row--header" aria-hidden="true">
+      <span>Facebook Name</span>
+      <span>YoWorld Name</span>
+      <span>Role</span>
+      <span>Birthday</span>
+      <span>Actions</span>
+    </div>
+  `;
+}
+
+function renderMemberDirectoryRow(member) {
+  return `
+    <article class="directory-row" role="listitem">
+      <div class="directory-cell directory-cell--name">
+        <strong>${escapeHtml(member.facebookName || member.displayName)}</strong>
+        ${member.metaText ? `<span class="directory-helper">${escapeHtml(member.metaText)}</span>` : ''}
+      </div>
+      <div class="directory-cell">
+        <span class="directory-primary">${escapeHtml(member.inGameName || 'Not added yet')}</span>
+        <span class="directory-helper">${escapeHtml(member.inGameName ? 'Use this to confirm the gift target.' : 'YoWorld name not added yet.')}</span>
+      </div>
+      <div class="directory-cell">
+        <span class="tag ${member.roleTagClass}">${escapeHtml(member.roleLabel)}</span>
+      </div>
+      <div class="directory-cell">
+        <span class="directory-primary">${escapeHtml(member.birthdayLabel)}</span>
+      </div>
+      <div class="directory-cell directory-cell--actions">
+        <div class="directory-actions">
+          ${member.homeLink
+            ? `<a class="hero-button hero-button--secondary" href="${escapeHtml(member.homeLink)}" target="_blank" rel="noreferrer">Open Home Link</a>`
+            : '<span class="muted">Home link not added yet.</span>'}
+          <button class="tracker-button ${state.privateData.visited[member.id] ? 'tracker-button--active' : ''}" type="button" data-toggle="visited" data-member-id="${escapeHtml(member.id)}">
+            ${state.privateData.visited[member.id] ? 'Visited' : 'Mark Visited'}
+          </button>
+        </div>
+      </div>
+    </article>
+  `;
+}
+
+function renderBirthdays() {
+  const birthdayMembers = getBirthdayMembers();
+
+  return `
+    <section class="panel stack-panel">
+      <div class="panel__heading">
+        <div>
+          <p class="eyebrow">Calendar</p>
+          <h3>Upcoming birthdays</h3>
+        </div>
+      </div>
+      <div class="stack-list">
+        ${birthdayMembers.length
+          ? birthdayMembers
+              .map(
+                (member) => `
+                  <div class="list-row">
+                    <div>
+                      <strong>${escapeHtml(member.displayName)}</strong>
+                      <span>${escapeHtml(member.secondaryName || member.metaText)}</span>
+                    </div>
+                    <span>${escapeHtml(member.birthdayLabel)}</span>
+                  </div>
+                `,
+              )
+              .join('')
+          : `
+              <div class="list-row list-row--compact">
+                <span>${escapeHtml(state.memberSource === 'loading' ? 'Loading live birthdays...' : 'No birthdays have been added yet.')}</span>
+              </div>
+            `}
+      </div>
+    </section>
+  `;
+}
+
+function renderGiveaways() {
+  return `
+    <section class="panel-grid panel-grid--members">
+      ${giveaways
+        .map(
+          (item) => `
+            <article class="panel">
+              <div class="member-card__header">
+                <div>
+                  <p class="eyebrow">Giveaway</p>
+                  <h3>${item.title}</h3>
+                </div>
+                <span class="tag ${item.claimedBy ? 'tag--muted' : ''}">${item.claimedBy ? 'Claimed' : 'Open'}</span>
+              </div>
+              <p>Posted by ${item.donor}</p>
+              <p class="muted">${item.note}</p>
+              <p class="claim-row">
+                ${item.claimedBy ? `Claimed by ${item.claimedBy}` : 'Available for a member claim flow later.'}
+              </p>
+            </article>
+          `,
+        )
+        .join('')}
+    </section>
+  `;
+}
+
+function renderHangouts() {
+  const currentEvents = getEvents();
+
+  return `
+    <section class="panel-grid panel-grid--members">
+      ${renderEventSourceNotice()}
+      ${currentEvents.length
+        ? currentEvents.map((calendarEvent) => renderEventCard(calendarEvent)).join('')
+        : renderEmptyEventPanel(
+            state.eventSource === 'loading' ? 'Loading events' : 'No events posted yet',
+            state.eventSource === 'loading'
+              ? 'Trying to load the shared event calendar from Supabase now.'
+              : 'No birthday parties, meet ups, games, special events, or custom events have been added yet.',
+          )}
+    </section>
+  `;
+}
+
+function renderEventCard(calendarEvent, options = {}) {
+  const { showAdminActions = false } = options;
+
+  return `
+    <article class="panel event-card">
+      <div class="panel__heading">
+        <div class="event-title-row">
+          <span class="event-type-icon ${calendarEvent.typeIndicatorClass}" aria-hidden="true">${escapeHtml(calendarEvent.typeIndicator)}</span>
+          <div>
+            <p class="eyebrow">${escapeHtml(calendarEvent.eventTypeLabel)}</p>
+            <h3>${escapeHtml(calendarEvent.title)}</h3>
+          </div>
+        </div>
+        <span class="tag">${escapeHtml(calendarEvent.whenLabel)}</span>
+      </div>
+      <p class="panel-lead">${escapeHtml(calendarEvent.details || getDefaultEventDescription(calendarEvent.eventType))}</p>
+      <div class="event-meta">
+        <div class="event-meta-row">
+          <strong>Host</strong>
+          <span>${escapeHtml(calendarEvent.hostName || 'Host coming soon')}</span>
+        </div>
+        <div class="event-meta-row">
+          <strong>Location</strong>
+          <span>${escapeHtml(calendarEvent.locationText || 'Location coming soon')}</span>
+        </div>
+      </div>
+      <div class="stats-grid stats-grid--compact event-stats">
+        <div class="stat-card">
+          <span>Yes</span>
+          <strong>${calendarEvent.yesCount}</strong>
+        </div>
+        <div class="stat-card">
+          <span>Maybe</span>
+          <strong>${calendarEvent.maybeCount}</strong>
+        </div>
+        <div class="stat-card">
+          <span>No</span>
+          <strong>${calendarEvent.noCount}</strong>
+        </div>
+      </div>
+      ${showAdminActions
+        ? `
+            <div class="button-row admin-form-actions">
+              <button class="hero-button hero-button--secondary" type="button" data-action="admin-edit-event" data-event-id="${escapeHtml(calendarEvent.id)}">Edit Event</button>
+              <button class="tracker-button" type="button" data-action="admin-deactivate-event" data-event-id="${escapeHtml(calendarEvent.id)}">Deactivate Event</button>
+            </div>
+          `
+        : ''}
+    </article>
+  `;
+}
+
+function renderNotes() {
+  const currentMembers = getMembers();
+
+  return `
+    <section class="panel-grid panel-grid--notes">
+      <article class="panel">
+        <div class="panel__heading">
+          <div>
+            <p class="eyebrow">Private</p>
+            <h3>Gifted and visited tracker</h3>
+          </div>
+        </div>
+        <div class="stack-list">
+          ${currentMembers.length
+            ? currentMembers
+                .map(
+                  (member) => `
+                    <div class="tracker-row">
+                      <div>
+                        <strong>${escapeHtml(member.displayName)}</strong>
+                        <span>${escapeHtml(member.secondaryName || member.statusText)}</span>
+                      </div>
+                      <div class="button-row">
+                        <button class="tracker-button ${state.privateData.gifted[member.id] ? 'tracker-button--active' : ''}" type="button" data-toggle="gifted" data-member-id="${escapeHtml(member.id)}">
+                          ${state.privateData.gifted[member.id] ? 'Gifted' : 'Mark Gifted'}
+                        </button>
+                        <button class="tracker-button ${state.privateData.visited[member.id] ? 'tracker-button--active' : ''}" type="button" data-toggle="visited" data-member-id="${escapeHtml(member.id)}">
+                          ${state.privateData.visited[member.id] ? 'Visited' : 'Mark Visited'}
+                        </button>
+                      </div>
+                    </div>
+                  `,
+                )
+                .join('')
+            : `
+                <div class="list-row list-row--compact">
+                  <span>${escapeHtml(state.memberSource === 'loading' ? 'Loading member tracker list...' : 'No members are available for private tracking yet.')}</span>
+                </div>
+              `}
+        </div>
+      </article>
+
+      <article class="panel">
+        <div class="panel__heading">
+          <div>
+            <p class="eyebrow">Private</p>
+            <h3>Member notes</h3>
+          </div>
+        </div>
+        <label class="notes-field" for="private-notes">These stay on this browser only.</label>
+        <textarea id="private-notes" data-private-notes placeholder="Track porch visits, gift ideas, or weekly reminders here.">${state.privateData.notes}</textarea>
+      </article>
+    </section>
+  `;
+}
+
+function renderAccount() {
+  if (!hasSupabaseConfig) {
+    return `
+      <section class="panel-grid panel-grid--admin">
+        <article class="panel panel--announcement panel--span-full">
+          <p class="eyebrow">Account Access</p>
+          <h3>Supabase config is still missing</h3>
+          <p class="panel-lead">Add the Supabase URL and anon key in src/config.js before using private accounts or staff tools.</p>
+        </article>
+      </section>
+    `;
+  }
+
+  if (!state.admin.isReady) {
+    return `
+      <section class="panel-grid panel-grid--admin">
+        <article class="panel panel--announcement panel--span-full">
+          <p class="eyebrow">Account Access</p>
+          <h3>Checking your account session</h3>
+          <p class="panel-lead">Loading sign-in status and staff permissions from Supabase.</p>
+        </article>
+      </section>
+    `;
+  }
+
+  if (!state.admin.session) {
+    return `
+      <section class="panel-grid panel-grid--admin">
+        ${renderAdminAuthPanel()}
+        ${renderAccountInfoPanel()}
+      </section>
+    `;
+  }
+
+  return `
+    <section class="panel-grid panel-grid--admin">
+      ${renderAdminSessionPanel()}
+      ${state.admin.isRecoveryMode ? renderPasswordRecoveryPanel() : ''}
+      ${renderAccountInfoPanel()}
+      ${hasAdminToolsAccess() ? renderAdminLaunchPanel() : ''}
+    </section>
+  `;
+}
+
+function renderAdmin() {
+  const currentMembers = getMembers();
+
+  if (!hasSupabaseConfig) {
+    return `
+      <section class="panel-grid panel-grid--admin">
+        <article class="panel panel--announcement panel--span-full">
+          <p class="eyebrow">Admin Tools</p>
+          <h3>Supabase config is still missing</h3>
+          <p class="panel-lead">Add the Supabase URL and anon key in src/config.js before using staff editing tools.</p>
+        </article>
+      </section>
+    `;
+  }
+
+  if (!state.admin.isReady) {
+    return `
+      <section class="panel-grid panel-grid--admin">
+        <article class="panel panel--announcement panel--span-full">
+          <p class="eyebrow">Admin Tools</p>
+          <h3>Checking your staff session</h3>
+          <p class="panel-lead">Loading sign-in status and staff permissions from Supabase.</p>
+        </article>
+      </section>
+    `;
+  }
+
+  if (!state.admin.session) {
+    return `
+      <section class="panel-grid panel-grid--admin">
+        <article class="panel panel--announcement panel--span-full">
+          <p class="eyebrow">Admin Tools</p>
+          <h3>Sign in first</h3>
+          <p class="panel-lead">Open the Account section to create or sign in to your private login before using staff editing tools.</p>
+          <div class="button-row">
+            <button class="hero-button" type="button" data-section="account">Open Account</button>
+          </div>
+        </article>
+        ${renderAdminChecklistPanel()}
+      </section>
+    `;
+  }
+
+  if (!hasStaffProfile()) {
+    return `
+      <section class="panel-grid panel-grid--admin">
+        ${renderAdminSessionPanel()}
+        <article class="panel panel--announcement">
+          <p class="eyebrow">Staff Access</p>
+          <h3>This account is signed in as a member</h3>
+          <p class="panel-lead">${escapeHtml(state.admin.notice || 'This account does not have a staff_permissions record, so admin tools stay locked.')}</p>
+          <div class="button-row">
+            <button class="hero-button" type="button" data-section="account">Open Account</button>
+            <button class="hero-button hero-button--secondary" type="button" data-action="admin-refresh-session">Refresh permissions</button>
+            <button class="hero-button hero-button--secondary" type="button" data-action="admin-sign-out">Sign out</button>
+          </div>
+        </article>
+        ${renderAdminChecklistPanel()}
+      </section>
+    `;
+  }
+
+  if (!hasAdminToolsAccess()) {
+    return `
+      <section class="panel-grid panel-grid--admin">
+        ${renderAdminSessionPanel()}
+        <article class="panel panel--announcement">
+          <p class="eyebrow">Admin Tools</p>
+          <h3>This staff role cannot edit live data</h3>
+          <p class="panel-lead">Your account is authenticated, but it does not currently have member-management or event-management permission.</p>
+        </article>
+        ${renderAdminChecklistPanel()}
+      </section>
+    `;
+  }
+
+  return `
+    <section class="panel-grid panel-grid--admin">
+      ${renderAdminSessionPanel()}
+      ${canManageMembers() ? renderAdminEditorPanel() : ''}
+      ${canManageMembers() ? renderAdminMemberLinkPanel(currentMembers) : ''}
+      ${canManageEvents() ? renderAdminEventEditorPanel(currentMembers) : ''}
+      ${canManageMembers() ? renderAdminMembersPanel(currentMembers) : ''}
+      ${canManageEvents() ? renderAdminEventsPanel() : ''}
+    </section>
+  `;
+}
+
+function renderAdminAuthPanel() {
+  const authForm = state.admin.authForm;
+
+  return `
+    <article class="panel panel--announcement">
+      <p class="eyebrow">Account Access</p>
+      <h3>Create or sign in to your private account</h3>
+      <p class="panel-lead">Passwords stay private. Staff editing only unlocks if the signed-in email also exists in staff_permissions. Use the reset link option if you already have an account but forgot the password.</p>
+      ${renderAdminNotice()}
+      <form class="admin-form" data-admin-auth-form>
+        <div class="form-grid">
+          <label class="field-group">
+            <span>Email</span>
+            <input class="text-input" type="email" name="email" value="${escapeHtml(authForm.email)}" autocomplete="email" required />
+          </label>
+          <label class="field-group">
+            <span>Password</span>
+            <input class="text-input" type="password" name="password" value="${escapeHtml(authForm.password)}" autocomplete="current-password" />
+            <small class="field-help">Required for Sign In and Create Account. Leave it blank when sending a reset link.</small>
+          </label>
+        </div>
+        <div class="button-row admin-form-actions">
+          <button class="hero-button" type="submit" value="sign-in">Sign In</button>
+          <button class="hero-button hero-button--secondary" type="submit" value="create-account">Create Account</button>
+          <button class="hero-button hero-button--secondary" type="submit" value="send-reset-link">Send Reset Link</button>
+        </div>
+      </form>
+    </article>
+  `;
+}
+
+function renderPasswordRecoveryPanel() {
+  const passwordResetForm = state.admin.passwordResetForm;
+  const sessionEmail = cleanText(state.admin.session?.user?.email || '');
+  const recoveryMessage = sessionEmail
+    ? `Recovery link confirmed for ${sessionEmail}. Enter a new password below.`
+    : 'Open the password recovery email link, then enter your new password here.';
+
+  return `
+    <article class="panel panel--announcement">
+      <p class="eyebrow">Password Recovery</p>
+      <h3>Choose a new password</h3>
+      <p class="panel-lead">${escapeHtml(recoveryMessage)}</p>
+      <form class="admin-form" data-admin-password-reset-form>
+        <div class="form-grid">
+          <label class="field-group">
+            <span>New Password</span>
+            <input class="text-input" type="password" name="new_password" value="${escapeHtml(passwordResetForm.newPassword)}" autocomplete="new-password" required />
+          </label>
+          <label class="field-group">
+            <span>Confirm Password</span>
+            <input class="text-input" type="password" name="confirm_password" value="${escapeHtml(passwordResetForm.confirmPassword)}" autocomplete="new-password" required />
+          </label>
+        </div>
+        <div class="button-row admin-form-actions">
+          <button class="hero-button" type="submit">Save New Password</button>
+        </div>
+      </form>
+    </article>
+  `;
+}
+
+function renderAdminSessionPanel() {
+  const staffProfile = state.admin.staffProfile;
+  const sessionEmail = cleanText(state.admin.session?.user?.email || '');
+  const isStaff = hasStaffProfile();
+  const linkedMember = getLinkedWishlistMember();
+
+  return `
+    <article class="panel panel--announcement">
+      <p class="eyebrow">Account Session</p>
+      <h3>${escapeHtml(staffProfile?.displayName || 'Member Account')}</h3>
+      <p class="panel-lead">${escapeHtml(sessionEmail || 'No active session email found.')}</p>
+      ${renderAdminNotice()}
+      <div class="permission-badges">
+        ${isStaff ? renderPermissionBadges(staffProfile) : '<span class="tag tag--muted">Member account</span>'}
+        ${linkedMember ? `<span class="tag tag--role-helper">Wishlist linked: ${escapeHtml(linkedMember.displayName)}</span>` : ''}
+      </div>
+      <div class="button-row admin-form-actions">
+        ${hasAdminToolsAccess() ? '<button class="hero-button" type="button" data-section="admin">Open Admin Tools</button>' : ''}
+        <button class="hero-button hero-button--secondary" type="button" data-action="admin-refresh-session">Refresh permissions</button>
+        <button class="hero-button hero-button--secondary" type="button" data-action="admin-sign-out">Sign Out</button>
+      </div>
+    </article>
+  `;
+}
+
+function renderAccountInfoPanel() {
+  const isSignedIn = Boolean(state.admin.session);
+
+  return `
+    <article class="panel">
+      <div class="panel__heading">
+        <div>
+          <p class="eyebrow">Account</p>
+          <h3>${escapeHtml(isSignedIn ? 'What this login does' : 'Private member login')}</h3>
+        </div>
+      </div>
+      <p class="panel-lead">Members can create their own login without sharing a password with admins. Staff permissions stay separate from normal account creation.</p>
+      <div class="stack-list">
+        <div class="list-row list-row--compact">
+          <strong>Password privacy</strong>
+          <span>Admins cannot see member passwords.</span>
+        </div>
+        <div class="list-row list-row--compact">
+          <strong>Password reset</strong>
+          <span>Use Send Reset Link to get a recovery email and choose a new password.</span>
+        </div>
+        <div class="list-row list-row--compact">
+          <strong>Member login</strong>
+          <span>Create an account for private features and future saved preferences.</span>
+        </div>
+        <div class="list-row list-row--compact">
+          <strong>Staff editing</strong>
+          <span>Only emails in staff_permissions unlock the editor.</span>
+        </div>
+      </div>
+    </article>
+  `;
+}
+
+function renderAdminLaunchPanel() {
+  const liveTools = [];
+
+  if (canManageMembers()) {
+    liveTools.push('member directory and birthdays');
+  }
+
+  if (canManageEvents()) {
+    liveTools.push('shared event calendar');
+  }
+
+  return `
+    <article class="panel panel--directory">
+      <div class="panel__heading">
+        <div>
+          <p class="eyebrow">Staff</p>
+          <h3>Admin tools are unlocked</h3>
+        </div>
+        <span class="tag tag--role-admin">Staff access</span>
+      </div>
+      <p class="panel-lead">This account can manage the live ${escapeHtml(liveTools.join(' and ') || 'staff tools')}. Open the editor when you want to add, update, deactivate, or organize shared group data.</p>
+      <div class="button-row">
+        <button class="hero-button" type="button" data-section="admin">Open Admin Tools</button>
+      </div>
+    </article>
+  `;
+}
+
+function renderPermissionBadges(staffProfile) {
+  const badges = [
+    `<span class="tag ${getRoleTagClass(staffProfile.permissionRole)}">${escapeHtml(formatGroupRoleLabel(staffProfile.permissionRole))}</span>`,
+    staffProfile.canManageMembers ? '<span class="tag tag--role-helper">Can manage members</span>' : '<span class="tag tag--muted">Read only</span>',
+    staffProfile.canManageRoles ? '<span class="tag tag--role-admin">Can manage roles</span>' : '<span class="tag tag--muted">Roles locked</span>',
+    staffProfile.canManageEvents ? '<span class="tag tag--role-event">Can manage events</span>' : '',
+  ].filter(Boolean);
+
+  return badges.join('');
+}
+
+function renderAdminEditorPanel() {
+  const form = state.admin.form;
+  const isEditing = Boolean(state.admin.editingMemberId);
+  const canManageRoles = Boolean(state.admin.staffProfile?.canManageRoles);
+
+  return `
+    <article class="panel">
+      <div class="panel__heading">
+        <div>
+          <p class="eyebrow">Member and Birthday Editor</p>
+          <h3>${isEditing ? 'Edit member' : 'Add member'}</h3>
+        </div>
+        <span class="tag">${escapeHtml(isEditing ? 'Editing active member' : 'New active member')}</span>
+      </div>
+      <p class="panel-lead">Use Facebook names as the primary label. Set the YoWorld name as the gift-confirmation name and add birthdays here for the shared birthday board.</p>
+      <form class="admin-form" data-admin-member-form>
+        <div class="form-grid">
+          <label class="field-group">
+            <span>Facebook Name</span>
+            <input class="text-input" type="text" name="facebook_name" value="${escapeHtml(form.facebookName)}" required />
+          </label>
+          <label class="field-group">
+            <span>YoWorld Name</span>
+            <input class="text-input" type="text" name="in_game_name" value="${escapeHtml(form.inGameName)}" />
+          </label>
+          <label class="field-group">
+            <span>House Key</span>
+            <input class="text-input" type="text" name="house_key" value="${escapeHtml(form.houseKey)}" placeholder="h123456789 or APLiving-123456789" />
+          </label>
+          <label class="field-group">
+            <span>Birthday</span>
+            <input class="text-input" type="text" name="birthday_raw" value="${escapeHtml(form.birthdayRaw)}" placeholder="September 6" />
+            <small class="field-help">Use the Month Day format so it shows correctly on the birthdays page.</small>
+          </label>
+          <label class="field-group">
+            <span>Visible Role</span>
+            <select class="text-input" name="group_role" ${canManageRoles ? '' : 'disabled'}>
+              ${renderRoleOptions(form.groupRole)}
+            </select>
+            <small class="field-help">${escapeHtml(canManageRoles ? 'Shown in the public directory.' : 'Role changes are locked for this account.')}</small>
+          </label>
+          <label class="field-group field-group--wide">
+            <span>Notes</span>
+            <textarea name="notes" class="admin-textarea" placeholder="Optional admin note or reminder for this member.">${escapeHtml(form.notes)}</textarea>
+          </label>
+        </div>
+        <div class="button-row admin-form-actions">
+          <button class="hero-button" type="submit">${escapeHtml(isEditing ? 'Save Changes' : 'Add Member')}</button>
+          <button class="hero-button hero-button--secondary" type="button" data-action="admin-reset-member-form">${escapeHtml(isEditing ? 'Cancel Edit' : 'Clear Form')}</button>
+        </div>
+      </form>
+      <p class="muted">Removing a member uses a safe deactivate action. Hard delete is intentionally disabled.</p>
+    </article>
+  `;
+}
+
+function renderAdminEventEditorPanel(currentMembers) {
+  const form = state.admin.eventForm;
+  const isEditing = Boolean(state.admin.editingEventId);
+
+  return `
+    <article class="panel">
+      <div class="panel__heading">
+        <div>
+          <p class="eyebrow">Event Calendar Editor</p>
+          <h3>${isEditing ? 'Edit event' : 'Add event'}</h3>
+        </div>
+        <span class="tag">${escapeHtml(isEditing ? 'Editing live event' : 'Shared calendar')}</span>
+      </div>
+      <p class="panel-lead">Add birthday parties, meet ups, games, special events, or a custom event type here. The event type controls the icon shown next to the event title.</p>
+      <form class="admin-form" data-admin-event-form>
+        <div class="form-grid">
+          <label class="field-group">
+            <span>Event Type</span>
+            <select class="text-input" name="event_type">
+              ${renderEventTypeOptions(form.eventType)}
+            </select>
+            <small class="field-help">Pick one of the shared types or choose Custom Type to name your own.</small>
+          </label>
+          <label class="field-group">
+            <span>Custom Event Type</span>
+            <input class="text-input" type="text" name="custom_event_type" value="${escapeHtml(form.customEventType)}" placeholder="Only used when Custom Type is selected" />
+            <small class="field-help">Examples: Trivia Night, Scavenger Hunt, Decorating Contest.</small>
+          </label>
+          <label class="field-group">
+            <span>Title</span>
+            <input class="text-input" type="text" name="title" value="${escapeHtml(form.title)}" required />
+          </label>
+          <label class="field-group">
+            <span>Date</span>
+            <input class="text-input" type="date" name="event_date" value="${escapeHtml(form.eventDate)}" required />
+          </label>
+          <label class="field-group">
+            <span>Start Time</span>
+            <input class="text-input" type="time" name="start_time" value="${escapeHtml(form.startTime)}" />
+            <small class="field-help">Leave blank for an all-day event.</small>
+          </label>
+          <label class="field-group">
+            <span>End Time</span>
+            <input class="text-input" type="time" name="end_time" value="${escapeHtml(form.endTime)}" />
+          </label>
+          <label class="field-group">
+            <span>Timezone Label</span>
+            <input class="text-input" type="text" name="timezone" value="${escapeHtml(form.timezone)}" placeholder="ET" />
+          </label>
+          <label class="field-group">
+            <span>Host</span>
+            <input class="text-input" type="text" name="host_name" value="${escapeHtml(form.hostName)}" list="event-host-options" placeholder="Nova June" />
+          </label>
+          <label class="field-group">
+            <span>Location</span>
+            <input class="text-input" type="text" name="location_text" value="${escapeHtml(form.locationText)}" placeholder="Party house, game room, Facebook thread, or meet-up spot" />
+          </label>
+          <label class="field-group">
+            <span>Yes Count</span>
+            <input class="text-input" type="number" min="0" name="yes_count" value="${escapeHtml(form.yesCount)}" />
+          </label>
+          <label class="field-group">
+            <span>Maybe Count</span>
+            <input class="text-input" type="number" min="0" name="maybe_count" value="${escapeHtml(form.maybeCount)}" />
+          </label>
+          <label class="field-group">
+            <span>No Count</span>
+            <input class="text-input" type="number" min="0" name="no_count" value="${escapeHtml(form.noCount)}" />
+          </label>
+          <label class="field-group field-group--wide">
+            <span>Details</span>
+            <textarea name="details" class="admin-textarea" placeholder="Describe the theme, timing, dress code, gifts, or party details.">${escapeHtml(form.details)}</textarea>
+          </label>
+        </div>
+        <datalist id="event-host-options">
+          ${currentMembers
+            .map((member) => `<option value="${escapeHtml(member.facebookName || member.displayName)}"></option>`)
+            .join('')}
+        </datalist>
+        <div class="button-row admin-form-actions">
+          <button class="hero-button" type="submit">${escapeHtml(isEditing ? 'Save Event' : 'Add Event')}</button>
+          <button class="hero-button hero-button--secondary" type="button" data-action="admin-reset-event-form">${escapeHtml(isEditing ? 'Cancel Edit' : 'Clear Form')}</button>
+        </div>
+      </form>
+      <p class="muted">Event planners and admins can manage the live shared calendar here. Old events should be deactivated instead of hard deleted.</p>
+    </article>
+  `;
+}
+
+function renderEventTypeOptions(selectedType) {
+  const selectedKey = normalizeEventType(selectedType);
+
+  return [...EVENT_TYPE_ORDER, CUSTOM_EVENT_TYPE_KEY]
+    .map(
+      (eventType) => `
+        <option value="${eventType}" ${selectedKey === eventType ? 'selected' : ''}>${escapeHtml(
+          eventType === CUSTOM_EVENT_TYPE_KEY ? 'Custom Type' : EVENT_TYPE_DETAILS[eventType].label,
+        )}</option>
+      `,
+    )
+    .join('');
+}
+
+function renderAdminMemberLinkPanel(currentMembers) {
+  const form = state.admin.memberLinkForm;
+
+  return `
+    <article class="panel">
+      <div class="panel__heading">
+        <div>
+          <p class="eyebrow">Member Login Link</p>
+          <h3>Connect a login to a member</h3>
+        </div>
+        <span class="tag">Wishlist access</span>
+      </div>
+      <p class="panel-lead">Link a member's sign-in email to their member row so the Wishlists tab can auto-fill the right home link and limit that account to its own current-week board.</p>
+      <form class="admin-form" data-admin-member-link-form>
+        <div class="form-grid">
+          <label class="field-group">
+            <span>Member Email</span>
+            <input class="text-input" type="email" name="linked_email" value="${escapeHtml(form.email)}" placeholder="member@example.com" required />
+          </label>
+          <label class="field-group">
+            <span>Linked Member</span>
+            <select class="text-input" name="linked_member_id" required>
+              <option value="">Choose a member</option>
+              ${renderWishlistMemberOptions(currentMembers, form.memberId)}
+            </select>
+          </label>
+        </div>
+        <div class="button-row admin-form-actions">
+          <button class="hero-button" type="submit">Save Member Link</button>
+        </div>
+      </form>
+      <p class="muted">After this link is saved, that login can manage only its own weekly wishlist unless it also has staff permissions.</p>
+    </article>
+  `;
+}
+
+function renderRoleOptions(selectedRole) {
+  return ['member', 'admin', 'event_planner', 'moderator', 'helper']
+    .map(
+      (role) => `
+        <option value="${role}" ${normalizeGroupRole(selectedRole) === role ? 'selected' : ''}>${escapeHtml(formatGroupRoleLabel(role))}</option>
+      `,
+    )
+    .join('');
+}
+
+function renderAdminMembersPanel(currentMembers) {
+  return `
+    <article class="panel panel--span-full panel--directory">
+      <div class="panel__heading">
+        <div>
+          <p class="eyebrow">Manage Members</p>
+          <h3>Active directory</h3>
+        </div>
+        <span class="tag">${escapeHtml(`${currentMembers.length} active members`)}</span>
+      </div>
+      <div class="directory-list" role="list">
+        <div class="directory-row directory-row--header" aria-hidden="true">
+          <span>Facebook Name</span>
+          <span>YoWorld Name</span>
+          <span>Role</span>
+          <span>Birthday</span>
+          <span>Editor Actions</span>
+        </div>
+        ${currentMembers.map((member) => renderAdminMemberRow(member)).join('')}
+      </div>
+    </article>
+  `;
+}
+
+function renderAdminMemberRow(member) {
+  const isSelected = member.id === state.admin.editingMemberId;
+
+  return `
+    <article class="directory-row ${isSelected ? 'directory-row--selected' : ''}" role="listitem">
+      <div class="directory-cell directory-cell--name">
+        <strong>${escapeHtml(member.facebookName || member.displayName)}</strong>
+        ${member.metaText ? `<span class="directory-helper">${escapeHtml(member.metaText)}</span>` : ''}
+      </div>
+      <div class="directory-cell">
+        <span class="directory-primary">${escapeHtml(member.inGameName || 'Not added yet')}</span>
+        <span class="directory-helper">${escapeHtml(member.inGameName ? 'Gift confirmation name' : 'YoWorld name not added yet.')}</span>
+      </div>
+      <div class="directory-cell">
+        <span class="tag ${member.roleTagClass}">${escapeHtml(member.roleLabel)}</span>
+      </div>
+      <div class="directory-cell">
+        <span class="directory-primary">${escapeHtml(member.birthdayLabel)}</span>
+      </div>
+      <div class="directory-cell directory-cell--actions">
+        <div class="directory-actions">
+          <button class="hero-button hero-button--secondary" type="button" data-action="admin-edit-member" data-member-id="${escapeHtml(member.id)}">Edit</button>
+          <button class="tracker-button" type="button" data-action="admin-deactivate-member" data-member-id="${escapeHtml(member.id)}">Deactivate</button>
+        </div>
+      </div>
+    </article>
+  `;
+}
+
+function renderAdminChecklistPanel() {
+  return `
+    <article class="panel">
+      <div class="panel__heading">
+        <div>
+          <p class="eyebrow">Next Steps</p>
+          <h3>Admin checklist</h3>
+        </div>
+      </div>
+      <div class="stack-list">
+        ${adminChecklist
+          .map(
+            (item) => `
+              <div class="list-row list-row--compact">
+                <span>${item}</span>
+              </div>
+            `,
+          )
+          .join('')}
+      </div>
+    </article>
+  `;
+}
+
+function renderAdminEventsPanel() {
+  const currentEvents = getEvents();
+
+  return `
+    <article class="panel panel--span-full panel--directory">
+      <div class="panel__heading">
+        <div>
+          <p class="eyebrow">Manage Events</p>
+          <h3>Shared event calendar</h3>
+        </div>
+        <span class="tag">${escapeHtml(`${currentEvents.length} active events`)}</span>
+      </div>
+      <p class="panel-lead">These events power the Events tab for everyone in the group. Use event types to surface the right icon and vibe for each listing.</p>
+      <div class="event-grid">
+        ${currentEvents.length
+          ? currentEvents.map((calendarEvent) => renderEventCard(calendarEvent, { showAdminActions: true })).join('')
+          : `
+              <div class="list-row list-row--compact">
+                <span>${escapeHtml(state.eventSource === 'loading' ? 'Loading live events...' : 'No events are active yet.')}</span>
+              </div>
+            `}
+      </div>
+    </article>
+  `;
+}
+
+function renderAdminNotice() {
+  if (!state.admin.notice) {
+    return '';
+  }
+
+  return `<p class="admin-message admin-message--${escapeHtml(state.admin.noticeTone)}">${escapeHtml(state.admin.notice)}</p>`;
+}
+
+function getMembers() {
+  return state.members;
+}
+
+function getWishlists() {
+  return [...state.wishlists].sort(compareWishlists);
+}
+
+function getActiveWishlists(limit = 0) {
+  const activeWishlists = getWishlists().filter((wishlist) => wishlist.isActive && isWishlistCurrentWeek(wishlist.weekStartDate));
+  return limit > 0 ? activeWishlists.slice(0, limit) : activeWishlists;
+}
+
+function getCurrentWeekWishlistForMember(memberId) {
+  const normalizedMemberId = cleanText(memberId);
+
+  if (!normalizedMemberId) {
+    return null;
+  }
+
+  return getWishlists().find(
+    (wishlist) => cleanText(wishlist.memberId) === normalizedMemberId && isWishlistCurrentWeek(wishlist.weekStartDate),
+  ) || null;
+}
+
+function getWishlistEditorMembers() {
+  if (canManageWishlists()) {
+    return getMembers();
+  }
+
+  const linkedMember = getLinkedWishlistMember();
+  return linkedMember ? [linkedMember] : [];
+}
+
+function getLinkedWishlistMember() {
+  return findMemberById(state.admin.memberAccount?.memberId);
+}
+
+function getWishlistEditorState() {
+  const availableMembers = getWishlistEditorMembers();
+  const selectedMember = findMemberById(state.admin.wishlistForm.memberId) || availableMembers[0] || null;
+
+  return {
+    canEdit: canManageWishlists() || hasLinkedWishlistAccess(),
+    availableMembers,
+    selectedMember,
+    currentWishlist: selectedMember ? getCurrentWeekWishlistForMember(selectedMember.id) : null,
+  };
+}
+
+function ensureWishlistEditorState() {
+  const availableMembers = getWishlistEditorMembers();
+
+  if (!availableMembers.length) {
+    return;
+  }
+
+  const selectedMemberId = cleanText(state.admin.wishlistForm.memberId);
+
+  if (availableMembers.some((member) => member.id === selectedMemberId)) {
+    return;
+  }
+
+  loadWishlistFormForMember(availableMembers[0].id);
+}
+
+function loadWishlistFormForMember(memberId) {
+  const normalizedMemberId = cleanText(memberId);
+  const currentWishlist = getCurrentWeekWishlistForMember(normalizedMemberId);
+  state.admin.wishlistForm = createEmptyWishlistForm(currentWishlist, normalizedMemberId);
+}
+
+function renderWishlistSourceNotice() {
+  if (state.wishlistSource === 'live') {
+    return '';
+  }
+
+  let title = 'Using mock wishlist data';
+  let message = state.wishlistSourceMessage || getSupabaseStatus();
+
+  if (state.wishlistSource === 'loading') {
+    title = 'Loading weekly wishlists';
+    message = 'The app found your Supabase config and is trying to load the live weekly wishlist board now.';
+  } else if (state.wishlistSource === 'restricted') {
+    title = 'Wishlist board is still private';
+  } else if (state.wishlistSource === 'error') {
+    title = 'Live wishlist load failed';
+  }
+
+  return `
+    <article class="panel panel--announcement panel--span-full">
+      <p class="eyebrow">Wishlist Status</p>
+      <h3>${escapeHtml(title)}</h3>
+      <p class="panel-lead">${escapeHtml(message)}</p>
+    </article>
+  `;
+}
+
+function getEvents() {
+  return [...state.events].sort(compareEvents);
+}
+
+function getBirthdayMembers() {
+  return getMembers().filter((member) => member.hasBirthday).sort(compareUpcomingBirthdays);
+}
+
+function getUpcomingBirthdayMembers(limit) {
+  const birthdayMembers = getBirthdayMembers();
+  return birthdayMembers.length ? birthdayMembers.slice(0, limit) : getMembers().slice(0, limit);
+}
+
+function buildDashboardCalendarModel(events) {
+  const today = new Date();
+  const monthIndex = today.getMonth();
+  const year = today.getFullYear();
+  const firstWeekday = new Date(year, monthIndex, 1).getDay();
+  const daysInMonth = new Date(year, monthIndex + 1, 0).getDate();
+  const eventsByDay = new Map();
+  const monthEvents = events.filter((calendarEvent) => {
+    const parts = parseIsoDateParts(calendarEvent.eventDate);
+
+    if (!parts || parts.year !== year || parts.monthIndex !== monthIndex) {
+      return false;
+    }
+
+    const currentEvents = eventsByDay.get(parts.day) || [];
+    currentEvents.push(calendarEvent);
+    eventsByDay.set(parts.day, currentEvents);
+    return true;
+  });
+  const cells = [];
+
+  for (let blankIndex = 0; blankIndex < firstWeekday; blankIndex += 1) {
+    cells.push({
+      kind: 'blank',
+      key: `blank-${blankIndex}`,
+    });
+  }
+
+  for (let dayNumber = 1; dayNumber <= daysInMonth; dayNumber += 1) {
+    cells.push({
+      kind: 'day',
+      key: `day-${dayNumber}`,
+      dayNumber,
+      isToday:
+        year === today.getFullYear() &&
+        monthIndex === today.getMonth() &&
+        dayNumber === today.getDate(),
+      events: eventsByDay.get(dayNumber) || [],
+    });
+  }
+
+  while (cells.length % 7 !== 0) {
+    cells.push({
+      kind: 'blank',
+      key: `blank-end-${cells.length}`,
+    });
+  }
+
+  return {
+    monthLabel: formatMonthYearLabel(year, monthIndex),
+    eventCount: monthEvents.length,
+    totalEventCount: events.length,
+    cells,
+  };
+}
+
+function getDashboardCalendarLeadText(calendarModel) {
+  if (state.eventSource === 'loading') {
+    return 'Loading live events into this month view now.';
+  }
+
+  if (state.eventSource === 'restricted') {
+    return 'Live events are still private, so the home calendar is using demo data for now.';
+  }
+
+  if (state.eventSource === 'error') {
+    return state.eventSourceMessage || 'Live events are unavailable right now.';
+  }
+
+  if (calendarModel.eventCount > 0) {
+    return `${calendarModel.eventCount} active ${calendarModel.eventCount === 1 ? 'event is' : 'events are'} scheduled in ${calendarModel.monthLabel}.`;
+  }
+
+  if (calendarModel.totalEventCount > 0) {
+    return `No active events are scheduled in ${calendarModel.monthLabel} yet.`;
+  }
+
+  return 'No active events are on the calendar yet.';
+}
+
+function buildDashboardCalendarCellTitle(cell) {
+  if (cell.kind !== 'day') {
+    return '';
+  }
+
+  const today = new Date();
+  const dateLabel = new Date(today.getFullYear(), today.getMonth(), cell.dayNumber).toLocaleString('en-US', {
+    month: 'long',
+    day: 'numeric',
+    year: 'numeric',
+  });
+
+  if (!cell.events.length) {
+    return dateLabel;
+  }
+
+  const eventLines = cell.events.map((calendarEvent) => {
+    const startTime = formatTimeLabel(calendarEvent.startTime);
+    return startTime ? `${calendarEvent.title} at ${startTime}` : calendarEvent.title;
+  });
+
+  return [dateLabel, ...eventLines].join('\n');
+}
+
+function getDirectoryStatusText() {
+  switch (state.memberSource) {
+    case 'live':
+      return `Live member directory connected. ${state.members.length} active members loaded.`;
+    case 'loading':
+      return 'Supabase config detected. Loading live member directory...';
+    case 'restricted':
+      return 'Supabase is connected, but the member directory is still private.';
+    case 'error':
+      return state.memberSourceMessage || 'Could not load the live member directory.';
+    case 'mock':
+    default:
+      return state.memberSourceMessage || getSupabaseStatus();
+  }
+}
+
+function renderDirectoryNotice() {
+  if (state.memberSource === 'live') {
+    return '';
+  }
+
+  let title = 'Using mock members';
+  let message = state.memberSourceMessage || getSupabaseStatus();
+
+  if (state.memberSource === 'loading') {
+    title = 'Loading live members';
+    message = 'The app found your Supabase config and is trying to load the active member directory now.';
+  } else if (state.memberSource === 'restricted') {
+    title = 'Directory still private';
+  } else if (state.memberSource === 'error') {
+    title = 'Live load failed';
+  }
+
+  return `
+    <article class="panel panel--announcement">
+      <p class="eyebrow">Directory Status</p>
+      <h3>${escapeHtml(title)}</h3>
+      <p class="panel-lead">${escapeHtml(message)}</p>
+    </article>
+  `;
+}
+
+function renderEmptyMemberPanel(title, message) {
+  return `
+    <article class="panel panel--announcement">
+      <p class="eyebrow">Members</p>
+      <h3>${escapeHtml(title)}</h3>
+      <p class="panel-lead">${escapeHtml(message)}</p>
+    </article>
+  `;
+}
+
+function renderEmptyEventPanel(title, message) {
+  return `
+    <article class="panel panel--announcement panel--span-full">
+      <p class="eyebrow">Events</p>
+      <h3>${escapeHtml(title)}</h3>
+      <p class="panel-lead">${escapeHtml(message)}</p>
+    </article>
+  `;
+}
+
+function renderEventSourceNotice() {
+  if (state.eventSource === 'live') {
+    return '';
+  }
+
+  let title = 'Using demo events';
+  let message = state.eventSourceMessage || getSupabaseStatus();
+
+  if (state.eventSource === 'loading') {
+    title = 'Loading shared events';
+    message = 'The app found your Supabase config and is trying to load the live event calendar now.';
+  } else if (state.eventSource === 'restricted') {
+    title = 'Events are still private';
+  } else if (state.eventSource === 'error') {
+    title = 'Live events are unavailable';
+  }
+
+  return `
+    <article class="panel panel--announcement panel--span-full">
+      <p class="eyebrow">Events Status</p>
+      <h3>${escapeHtml(title)}</h3>
+      <p class="panel-lead">${escapeHtml(message)}</p>
+    </article>
+  `;
+}
+
+function createDefaultAdminState() {
+  const storedSession = getStoredSession();
+
+  return {
+    session: storedSession,
+    staffProfile: null,
+    memberAccount: null,
+    isReady: false,
+    isBusy: false,
+    notice: '',
+    noticeTone: 'muted',
+    isRecoveryMode: false,
+    authForm: createAdminAuthForm(storedSession),
+    memberLinkForm: createMemberLinkForm(storedSession),
+    passwordResetForm: createPasswordResetForm(),
+    wishlistForm: createEmptyWishlistForm(),
+    editingMemberId: '',
+    form: createEmptyMemberForm(),
+    editingEventId: '',
+    eventForm: createEmptyEventForm(),
+  };
+}
+
+function setAdminNotice(message, tone = 'muted') {
+  state.admin.notice = cleanText(message);
+  state.admin.noticeTone = tone;
+}
+
+function createEmptyMemberForm(member = null) {
+  return {
+    facebookName: cleanText(member?.facebookName),
+    inGameName: cleanText(member?.inGameName),
+    houseKey: cleanText(member?.houseKey),
+    birthdayRaw: cleanText(member?.birthdayRaw),
+    groupRole: normalizeGroupRole(member?.groupRole),
+    notes: cleanText(member?.notes),
+  };
+}
+
+function createAdminAuthForm(session = null) {
+  return {
+    email: cleanText(session?.user?.email),
+    password: '',
+  };
+}
+
+function createPasswordResetForm() {
+  return {
+    newPassword: '',
+    confirmPassword: '',
+  };
+}
+
+function createMemberLinkForm(session = null, link = null) {
+  return {
+    email: cleanText(link?.email || session?.user?.email).toLowerCase(),
+    memberId: cleanText(link?.memberId),
+  };
+}
+
+function createEmptyWishlistItem(item = null, index = 0) {
+  return {
+    id: cleanText(item?.id) || `wishlist-slot-${index + 1}`,
+    name: cleanText(item?.name || item?.itemName),
+    imageUrl: sanitizeUrl(cleanText(item?.imageUrl || item?.item_image_url)),
+    sourceUrl: sanitizeUrl(cleanText(item?.sourceUrl || item?.item_source_url)),
+    availabilityStatus: normalizeWishlistAvailability(item?.availabilityStatus || item?.availability_status),
+    isReceived: Boolean(item?.isReceived ?? item?.is_received),
+    receivedFrom: cleanText(item?.receivedFrom || item?.received_from),
+    sortOrder: parseNullableInt(item?.sortOrder || item?.sort_order) || index + 1,
+  };
+}
+
+function createEmptyWishlistForm(wishlist = null, memberId = '') {
+  const sourceItems = Array.isArray(wishlist?.items) ? wishlist.items : [];
+
+  return {
+    memberId: cleanText(memberId || wishlist?.memberId),
+    summary: cleanText(wishlist?.summary),
+    statusNote: cleanText(wishlist?.statusNote || wishlist?.updateNote),
+    thankYouNote: cleanText(wishlist?.thankYouNote),
+    items: Array.from({ length: WISHLIST_ITEM_SLOT_COUNT }, (_, index) => createEmptyWishlistItem(sourceItems[index], index)),
+  };
+}
+
+function createEmptyEventForm(calendarEvent = null) {
+  const eventTypeDetails = getEventTypeDetails(calendarEvent?.eventType);
+
+  return {
+    title: cleanText(calendarEvent?.title),
+    eventType: eventTypeDetails.isCustom ? CUSTOM_EVENT_TYPE_KEY : eventTypeDetails.id,
+    customEventType: eventTypeDetails.isCustom ? eventTypeDetails.storedValue : '',
+    eventDate: cleanText(calendarEvent?.eventDate),
+    startTime: normalizeEventTime(calendarEvent?.startTime),
+    endTime: normalizeEventTime(calendarEvent?.endTime),
+    timezone: cleanText(calendarEvent?.timezone) || DEFAULT_EVENT_TIMEZONE,
+    hostName: cleanText(calendarEvent?.hostName),
+    locationText: cleanText(calendarEvent?.locationText),
+    yesCount: String(normalizeEventCount(calendarEvent?.yesCount)),
+    maybeCount: String(normalizeEventCount(calendarEvent?.maybeCount)),
+    noCount: String(normalizeEventCount(calendarEvent?.noCount)),
+    details: cleanText(calendarEvent?.details),
+  };
+}
+
+async function initializeAdminSession(showRefreshMessage = false) {
+  state.admin.isReady = false;
+  render();
+
+  const redirectSession = await consumeAuthRedirectSession();
+  const session = redirectSession.session || (await getValidSession());
+  state.admin.session = session;
+  state.admin.staffProfile = null;
+  state.admin.memberAccount = null;
+  state.admin.isRecoveryMode = Boolean(redirectSession.session && redirectSession.type === 'recovery');
+  state.admin.authForm = {
+    ...state.admin.authForm,
+    email: state.admin.authForm.email || cleanText(session?.user?.email),
+  };
+  state.admin.memberLinkForm = createMemberLinkForm(session, state.admin.memberAccount);
+
+  if (state.admin.isRecoveryMode) {
+    state.admin.passwordResetForm = createPasswordResetForm();
+  }
+
+  if (session) {
+    await loadStaffProfile();
+    await loadCurrentMemberAccount();
+
+    if (state.admin.isRecoveryMode) {
+      state.activeSection = 'account';
+      setAdminNotice('Recovery link confirmed. Choose a new password below.', 'success');
+    }
+  } else if (showRefreshMessage) {
+    setAdminNotice('No active account session was found. Sign in again to continue.', 'muted');
+  }
+
+  if (redirectSession.error) {
+    state.activeSection = 'account';
+    state.admin.isRecoveryMode = false;
+    setAdminNotice(redirectSession.error, 'error');
+  }
+
+  state.admin.isReady = true;
+  render();
+}
+
+async function loadStaffProfile() {
+  if (!state.admin.session?.user?.email) {
+    state.admin.staffProfile = null;
+    return;
+  }
+
+  const query = new URLSearchParams({
+    select: 'email,display_name,permission_role,can_manage_members,can_manage_roles,can_manage_events,is_active,notes',
+    email: `eq.${state.admin.session.user.email}`,
+  }).toString();
+  const response = await supabaseFetch('staff_permissions', {
+    query,
+    method: 'GET',
+    useSession: true,
+  });
+
+  if (!response.ok) {
+    state.admin.staffProfile = null;
+    setAdminNotice(await getSupabaseErrorMessage(response, 'staff'), 'error');
+    return;
+  }
+
+  const rows = await response.json();
+  const profile = Array.isArray(rows) ? rows[0] : null;
+  state.admin.staffProfile = profile ? normalizeStaffProfile(profile) : null;
+
+  if (!hasStaffProfile()) {
+    setAdminNotice('Signed in. This account can use private login features, but staff editing is still locked.', 'muted');
+    return;
+  }
+
+  setAdminNotice(`Signed in as ${state.admin.staffProfile.displayName}.`, 'success');
+}
+
+async function loadCurrentMemberAccount() {
+  if (!hasSupabaseConfig || !state.admin.session?.user?.email) {
+    state.admin.memberAccount = null;
+    return;
+  }
+
+  const query = new URLSearchParams({
+    select: 'email,member_id',
+    email: `eq.${cleanText(state.admin.session.user.email).toLowerCase()}`,
+  }).toString();
+  const response = await supabaseFetch('member_accounts', {
+    query,
+    method: 'GET',
+    useSession: true,
+  });
+
+  if (!response.ok) {
+    state.admin.memberAccount = null;
+    state.admin.memberLinkForm = createMemberLinkForm(state.admin.session);
+    return;
+  }
+
+  const rows = await response.json();
+  const link = Array.isArray(rows) ? rows[0] : null;
+
+  state.admin.memberAccount = link
+    ? {
+        email: cleanText(link.email).toLowerCase(),
+        memberId: cleanText(link.member_id),
+      }
+    : null;
+  state.admin.memberLinkForm = createMemberLinkForm(state.admin.session, state.admin.memberAccount);
+}
+
+function normalizeStaffProfile(profile) {
+  return {
+    email: cleanText(profile.email),
+    displayName: cleanText(profile.display_name) || 'Staff Member',
+    permissionRole: normalizeGroupRole(profile.permission_role),
+    canManageMembers: Boolean(profile.can_manage_members),
+    canManageRoles: Boolean(profile.can_manage_roles),
+    canManageEvents: Boolean(profile.can_manage_events),
+    isActive: Boolean(profile.is_active),
+    notes: cleanText(profile.notes),
+  };
+}
+
+async function handleAdminAuthSubmit(event) {
+  if (!hasSupabaseConfig) {
+    setAdminNotice('Supabase config is missing. Add it in src/config.js first.', 'error');
+    render();
+    return;
+  }
+
+  const formData = new FormData(event.target);
+  const email = cleanText(formData.get('email')).toLowerCase();
+  const password = String(formData.get('password') || '').trim();
+  const mode = event.submitter?.value || 'sign-in';
+
+  if (!email) {
+    setAdminNotice('Email is required.', 'error');
+    render();
+    return;
+  }
+
+  if (mode !== 'send-reset-link' && !password) {
+    setAdminNotice('Email and password are both required.', 'error');
+    render();
+    return;
+  }
+
+  state.admin.isBusy = true;
+  setAdminNotice(
+    mode === 'create-account'
+      ? 'Creating your account...'
+      : mode === 'send-reset-link'
+        ? 'Sending your password reset link...'
+        : 'Signing in...',
+    'muted',
+  );
+  render();
+
+  try {
+    if (mode === 'send-reset-link') {
+      await sendPasswordResetEmail(email, buildPasswordResetRedirectUrl());
+      state.admin.authForm = {
+        email,
+        password: '',
+      };
+      setAdminNotice('Password reset link sent. Check your email, open the link in this browser, and then choose a new password here.', 'success');
+    } else if (mode === 'create-account') {
+      const result = await signUpWithPassword(email, password);
+
+      if (result.session) {
+        state.admin.session = result.session;
+        state.admin.authForm = createAdminAuthForm(result.session);
+        await loadStaffProfile();
+      } else if (result.needsEmailConfirmation) {
+        state.admin.session = null;
+        state.admin.authForm = {
+          email,
+          password: '',
+        };
+        setAdminNotice('Account created. Check your email to confirm it, then come back and sign in.', 'success');
+      } else {
+        state.admin.authForm = {
+          email,
+          password: '',
+        };
+        setAdminNotice('Account created. You can sign in now.', 'success');
+      }
+    } else {
+      state.admin.session = await signInWithPassword(email, password);
+      state.admin.authForm = createAdminAuthForm(state.admin.session);
+      await loadStaffProfile();
+    }
+  } catch (error) {
+    setAdminNotice(error instanceof Error ? error.message : 'Account sign-in failed.', 'error');
+  } finally {
+    state.admin.isBusy = false;
+    state.admin.isReady = true;
+    render();
+  }
+}
+
+async function handlePasswordResetSubmit(event) {
+  if (!state.admin.isRecoveryMode) {
+    setAdminNotice('Open the password recovery link from your email first.', 'error');
+    render();
+    return;
+  }
+
+  const formData = new FormData(event.target);
+  const newPassword = String(formData.get('new_password') || '').trim();
+  const confirmPassword = String(formData.get('confirm_password') || '').trim();
+
+  if (!newPassword || !confirmPassword) {
+    setAdminNotice('Enter and confirm your new password.', 'error');
+    render();
+    return;
+  }
+
+  if (newPassword.length < 6) {
+    setAdminNotice('Passwords must be at least 6 characters long.', 'error');
+    render();
+    return;
+  }
+
+  if (newPassword !== confirmPassword) {
+    setAdminNotice('The password confirmation does not match.', 'error');
+    render();
+    return;
+  }
+
+  state.admin.isBusy = true;
+  setAdminNotice('Saving your new password...', 'muted');
+  render();
+
+  try {
+    state.admin.session = await updatePassword(newPassword);
+    state.admin.isRecoveryMode = false;
+    state.admin.passwordResetForm = createPasswordResetForm();
+    await loadStaffProfile();
+    setAdminNotice('Password updated. You are signed in with your new password.', 'success');
+  } catch (error) {
+    setAdminNotice(error instanceof Error ? error.message : 'Could not update your password.', 'error');
+  } finally {
+    state.admin.isBusy = false;
+    state.admin.isReady = true;
+    render();
+  }
+}
+
+async function handleAdminSignOut() {
+  await signOut();
+  state.admin = createDefaultAdminState();
+  state.admin.isReady = true;
+  if (state.activeSection === 'admin') {
+    state.activeSection = 'account';
+  }
+  setAdminNotice('Signed out.', 'muted');
+  render();
+}
+
+function beginEditingMember(memberId) {
+  const member = getMembers().find((entry) => entry.id === memberId);
+
+  if (!member) {
+    setAdminNotice('That member could not be found.', 'error');
+    return;
+  }
+
+  state.admin.editingMemberId = member.id;
+  state.admin.form = createEmptyMemberForm(member);
+  setAdminNotice(`Editing ${member.facebookName || member.displayName}.`, 'muted');
+}
+
+function resetAdminEditor() {
+  state.admin.editingMemberId = '';
+  state.admin.form = createEmptyMemberForm();
+  setAdminNotice('Member form reset.', 'muted');
+}
+
+function beginEditingEvent(eventId) {
+  const calendarEvent = getEvents().find((entry) => entry.id === eventId);
+
+  if (!calendarEvent) {
+    setAdminNotice('That event could not be found.', 'error');
+    return;
+  }
+
+  state.admin.editingEventId = calendarEvent.id;
+  state.admin.eventForm = createEmptyEventForm(calendarEvent);
+  setAdminNotice(`Editing ${calendarEvent.title}.`, 'muted');
+}
+
+function resetAdminEventEditor() {
+  state.admin.editingEventId = '';
+  state.admin.eventForm = createEmptyEventForm();
+  setAdminNotice('Event form reset.', 'muted');
+}
+
+function resetWishlistEditor() {
+  const fallbackMember = getWishlistEditorMembers()[0] || null;
+  const fallbackMemberId = cleanText(fallbackMember?.id);
+
+  state.admin.wishlistForm = createEmptyWishlistForm(getCurrentWeekWishlistForMember(fallbackMemberId), fallbackMemberId);
+  setAdminNotice('Wishlist form reset.', 'muted');
+}
+
+function syncAdminDraftField(target) {
+  if (!(target instanceof Element) || !target.name) {
+    return;
+  }
+
+  if (target.closest('[data-admin-auth-form]')) {
+    syncAdminDraftState('authForm', ADMIN_AUTH_FIELD_MAP, target);
+    return;
+  }
+
+  if (target.closest('[data-admin-member-form]')) {
+    syncAdminDraftState('form', ADMIN_MEMBER_FIELD_MAP, target);
+    return;
+  }
+
+  if (target.closest('[data-admin-event-form]')) {
+    syncAdminDraftState('eventForm', ADMIN_EVENT_FIELD_MAP, target);
+    return;
+  }
+
+  if (target.closest('[data-wishlist-form]')) {
+    syncWishlistDraftField(target);
+    return;
+  }
+
+  if (target.closest('[data-admin-member-link-form]')) {
+    syncAdminDraftState('memberLinkForm', ADMIN_MEMBER_LINK_FIELD_MAP, target);
+    return;
+  }
+
+  if (target.closest('[data-admin-password-reset-form]')) {
+    syncAdminDraftState('passwordResetForm', ADMIN_PASSWORD_RESET_FIELD_MAP, target);
+  }
+}
+
+function syncAdminDraftState(stateKey, fieldMap, target) {
+  const draftKey = fieldMap[target.name];
+
+  if (!draftKey) {
+    return;
+  }
+
+  state.admin[stateKey] = {
+    ...state.admin[stateKey],
+    [draftKey]: target.value,
+  };
+}
+
+function syncWishlistDraftField(target) {
+  if (!(target instanceof Element) || !target.name) {
+    return;
+  }
+
+  if (target.name === 'member_id') {
+    loadWishlistFormForMember(target.value);
+    render();
+    return;
+  }
+
+  const itemMatch = target.name.match(/^(item_name|item_image_url|item_source_url|availability_status|received_from|is_received)_(\d+)$/);
+
+  if (itemMatch) {
+    const itemIndex = Number.parseInt(itemMatch[2], 10);
+
+    if (Number.isNaN(itemIndex) || itemIndex < 0 || itemIndex >= state.admin.wishlistForm.items.length) {
+      return;
+    }
+
+    const nextItems = [...state.admin.wishlistForm.items];
+    const currentItem = nextItems[itemIndex];
+    let nextValue = target.value;
+
+    if (target instanceof HTMLInputElement && target.type === 'checkbox') {
+      nextValue = target.checked;
+    }
+
+    switch (itemMatch[1]) {
+      case 'item_name':
+        nextItems[itemIndex] = { ...currentItem, name: String(nextValue) };
+        break;
+      case 'item_image_url':
+        nextItems[itemIndex] = { ...currentItem, imageUrl: String(nextValue) };
+        break;
+      case 'item_source_url':
+        nextItems[itemIndex] = { ...currentItem, sourceUrl: String(nextValue) };
+        break;
+      case 'availability_status':
+        nextItems[itemIndex] = { ...currentItem, availabilityStatus: String(nextValue) };
+        break;
+      case 'received_from':
+        nextItems[itemIndex] = { ...currentItem, receivedFrom: String(nextValue) };
+        break;
+      case 'is_received':
+        nextItems[itemIndex] = { ...currentItem, isReceived: Boolean(nextValue) };
+        break;
+      default:
+        return;
+    }
+
+    state.admin.wishlistForm = {
+      ...state.admin.wishlistForm,
+      items: nextItems,
+    };
+    return;
+  }
+
+  syncAdminDraftState('wishlistForm', ADMIN_WISHLIST_FIELD_MAP, target);
+}
+
+async function handleAdminMemberSubmit(event) {
+  if (!state.admin.staffProfile?.canManageMembers) {
+    setAdminNotice('This account does not have permission to manage members.', 'error');
+    render();
+    return;
+  }
+
+  const formData = new FormData(event.target);
+  const currentMember = state.admin.editingMemberId
+    ? getMembers().find((entry) => entry.id === state.admin.editingMemberId)
+    : null;
+
+  state.admin.isBusy = true;
+  setAdminNotice(state.admin.editingMemberId ? 'Saving member changes...' : 'Adding member...', 'muted');
+  render();
+
+  try {
+    const payload = buildMemberPayload(formData, currentMember);
+    const wasEditing = Boolean(state.admin.editingMemberId);
+    const response = state.admin.editingMemberId
+      ? await supabaseFetch('members', {
+          method: 'PATCH',
+          query: new URLSearchParams({ id: `eq.${state.admin.editingMemberId}` }).toString(),
+          useSession: true,
+          headers: {
+            Prefer: 'return=representation',
+          },
+          body: payload,
+        })
+      : await supabaseFetch('members', {
+          method: 'POST',
+          useSession: true,
+          headers: {
+            Prefer: 'return=representation',
+          },
+          body: payload,
+        });
+
+    if (!response.ok) {
+      throw new Error(await getSupabaseErrorMessage(response, 'write'));
+    }
+
+    const rows = await response.json();
+    const savedRow = Array.isArray(rows) ? rows[0] : rows;
+    const savedName = cleanText(savedRow?.facebook_name) || payload.facebook_name;
+
+    state.admin.editingMemberId = '';
+    state.admin.form = createEmptyMemberForm();
+    await loadLiveMembers();
+    setAdminNotice(
+      wasEditing ? `Saved ${savedName}.` : `${savedName} is now in the directory.`,
+      'success',
+    );
+  } catch (error) {
+    setAdminNotice(error instanceof Error ? error.message : 'Could not save that member.', 'error');
+  } finally {
+    state.admin.isBusy = false;
+    render();
+  }
+}
+
+async function handleAdminEventSubmit(event) {
+  if (!canManageEvents()) {
+    setAdminNotice('This account does not have permission to manage events.', 'error');
+    render();
+    return;
+  }
+
+  state.admin.isBusy = true;
+  setAdminNotice(state.admin.editingEventId ? 'Saving event changes...' : 'Adding event...', 'muted');
+  render();
+
+  try {
+    const payload = buildEventPayload(new FormData(event.target));
+    const wasEditing = Boolean(state.admin.editingEventId);
+    const response = state.admin.editingEventId
+      ? await supabaseFetch('events', {
+          method: 'PATCH',
+          query: new URLSearchParams({ id: `eq.${state.admin.editingEventId}` }).toString(),
+          useSession: true,
+          headers: {
+            Prefer: 'return=representation',
+          },
+          body: payload,
+        })
+      : await supabaseFetch('events', {
+          method: 'POST',
+          useSession: true,
+          headers: {
+            Prefer: 'return=representation',
+          },
+          body: payload,
+        });
+
+    if (!response.ok) {
+      throw new Error(await getSupabaseErrorMessage(response, 'event-write'));
+    }
+
+    const rows = await response.json();
+    const savedRow = Array.isArray(rows) ? rows[0] : rows;
+    const savedTitle = cleanText(savedRow?.title) || payload.title;
+
+    state.admin.editingEventId = '';
+    state.admin.eventForm = createEmptyEventForm();
+    await loadLiveEvents();
+    setAdminNotice(wasEditing ? `Saved ${savedTitle}.` : `${savedTitle} is now on the shared calendar.`, 'success');
+  } catch (error) {
+    setAdminNotice(error instanceof Error ? error.message : 'Could not save that event.', 'error');
+  } finally {
+    state.admin.isBusy = false;
+    render();
+  }
+}
+
+async function handleWishlistSubmit(event) {
+  if (!state.admin.session) {
+    setAdminNotice('Sign in first to post a weekly wishlist.', 'error');
+    render();
+    return;
+  }
+
+  const editorState = getWishlistEditorState();
+
+  if (!editorState.canEdit) {
+    setAdminNotice('This account is not linked to a member record yet.', 'error');
+    render();
+    return;
+  }
+
+  const formData = new FormData(event.target);
+  const targetMemberId = canManageWishlists()
+    ? cleanText(formData.get('member_id'))
+    : cleanText(state.admin.memberAccount?.memberId);
+  const targetMember = findMemberById(targetMemberId);
+
+  if (!targetMember) {
+    setAdminNotice('Choose a valid member before saving the wishlist.', 'error');
+    render();
+    return;
+  }
+
+  state.admin.isBusy = true;
+  setAdminNotice('Saving this week\'s wishlist...', 'muted');
+  render();
+
+  try {
+    const payload = buildWishlistPostPayload(formData, targetMember);
+    const response = await supabaseFetch('wishlist_posts', {
+      method: 'POST',
+      query: new URLSearchParams({ on_conflict: 'member_id,week_start_date' }).toString(),
+      useSession: true,
+      headers: {
+        Prefer: 'resolution=merge-duplicates,return=representation',
+      },
+      body: payload,
+    });
+
+    if (!response.ok) {
+      throw new Error(await getSupabaseErrorMessage(response, 'wishlist-write'));
+    }
+
+    const rows = await response.json();
+    const savedRow = Array.isArray(rows) ? rows[0] : rows;
+    const wishlistId = cleanText(savedRow?.id);
+
+    if (!wishlistId) {
+      throw new Error('Supabase did not return the saved wishlist id.');
+    }
+
+    const deleteResponse = await supabaseFetch('wishlist_items', {
+      method: 'DELETE',
+      query: new URLSearchParams({ wishlist_id: `eq.${wishlistId}` }).toString(),
+      useSession: true,
+    });
+
+    if (!deleteResponse.ok) {
+      throw new Error(await getSupabaseErrorMessage(deleteResponse, 'wishlist-write'));
+    }
+
+    const itemPayload = buildWishlistItemPayloads(formData, wishlistId);
+
+    if (itemPayload.length) {
+      const itemResponse = await supabaseFetch('wishlist_items', {
+        method: 'POST',
+        useSession: true,
+        headers: {
+          Prefer: 'return=representation',
+        },
+        body: itemPayload,
+      });
+
+      if (!itemResponse.ok) {
+        throw new Error(await getSupabaseErrorMessage(itemResponse, 'wishlist-write'));
+      }
+    }
+
+    await loadLiveWishlists();
+    loadWishlistFormForMember(targetMember.id);
+    setAdminNotice(`${targetMember.displayName} now has an active wishlist for this week.`, 'success');
+  } catch (error) {
+    setAdminNotice(error instanceof Error ? error.message : 'Could not save this wishlist.', 'error');
+  } finally {
+    state.admin.isBusy = false;
+    render();
+  }
+}
+
+async function handleAdminMemberLinkSubmit(event) {
+  if (!canManageMembers()) {
+    setAdminNotice('This account does not have permission to link member accounts.', 'error');
+    render();
+    return;
+  }
+
+  const formData = new FormData(event.target);
+  const email = cleanText(formData.get('linked_email')).toLowerCase();
+  const memberId = cleanText(formData.get('linked_member_id'));
+  const targetMember = findMemberById(memberId);
+
+  if (!email) {
+    setAdminNotice('Email is required for member account linking.', 'error');
+    render();
+    return;
+  }
+
+  if (!targetMember) {
+    setAdminNotice('Choose a member to link.', 'error');
+    render();
+    return;
+  }
+
+  state.admin.isBusy = true;
+  setAdminNotice(`Linking ${email} to ${targetMember.displayName}...`, 'muted');
+  render();
+
+  try {
+    const response = await supabaseFetch('member_accounts', {
+      method: 'POST',
+      query: new URLSearchParams({ on_conflict: 'email' }).toString(),
+      useSession: true,
+      headers: {
+        Prefer: 'resolution=merge-duplicates,return=representation',
+      },
+      body: {
+        email,
+        member_id: memberId,
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error(await getSupabaseErrorMessage(response, 'member-link'));
+    }
+
+    if (cleanText(state.admin.session?.user?.email).toLowerCase() === email) {
+      await loadCurrentMemberAccount();
+    }
+
+    state.admin.memberLinkForm = createMemberLinkForm(state.admin.session, {
+      email,
+      memberId,
+    });
+    setAdminNotice(`${email} is now linked to ${targetMember.displayName}.`, 'success');
+  } catch (error) {
+    setAdminNotice(error instanceof Error ? error.message : 'Could not link that member account.', 'error');
+  } finally {
+    state.admin.isBusy = false;
+    render();
+  }
+}
+
+async function deactivateMember(memberId) {
+  if (!state.admin.staffProfile?.canManageMembers) {
+    setAdminNotice('This account does not have permission to manage members.', 'error');
+    render();
+    return;
+  }
+
+  const member = getMembers().find((entry) => entry.id === memberId);
+
+  if (!member) {
+    setAdminNotice('That member could not be found.', 'error');
+    render();
+    return;
+  }
+
+  if (!window.confirm(`Deactivate ${member.facebookName || member.displayName}? They will be removed from the live directory.`)) {
+    return;
+  }
+
+  state.admin.isBusy = true;
+  setAdminNotice(`Deactivating ${member.facebookName || member.displayName}...`, 'muted');
+  render();
+
+  try {
+    const response = await supabaseFetch('members', {
+      method: 'PATCH',
+      query: new URLSearchParams({ id: `eq.${memberId}` }).toString(),
+      useSession: true,
+      headers: {
+        Prefer: 'return=representation',
+      },
+      body: {
+        is_active: false,
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error(await getSupabaseErrorMessage(response, 'write'));
+    }
+
+    if (state.admin.editingMemberId === memberId) {
+      state.admin.editingMemberId = '';
+      state.admin.form = createEmptyMemberForm();
+    }
+
+    await loadLiveMembers();
+    setAdminNotice(`${member.facebookName || member.displayName} was deactivated.`, 'success');
+  } catch (error) {
+    setAdminNotice(error instanceof Error ? error.message : 'Could not deactivate that member.', 'error');
+  } finally {
+    state.admin.isBusy = false;
+    render();
+  }
+}
+
+async function deactivateEvent(eventId) {
+  if (!canManageEvents()) {
+    setAdminNotice('This account does not have permission to manage events.', 'error');
+    render();
+    return;
+  }
+
+  const calendarEvent = getEvents().find((entry) => entry.id === eventId);
+
+  if (!calendarEvent) {
+    setAdminNotice('That event could not be found.', 'error');
+    render();
+    return;
+  }
+
+  if (!window.confirm(`Deactivate ${calendarEvent.title}? It will be removed from the live event calendar.`)) {
+    return;
+  }
+
+  state.admin.isBusy = true;
+  setAdminNotice(`Deactivating ${calendarEvent.title}...`, 'muted');
+  render();
+
+  try {
+    const response = await supabaseFetch('events', {
+      method: 'PATCH',
+      query: new URLSearchParams({ id: `eq.${eventId}` }).toString(),
+      useSession: true,
+      headers: {
+        Prefer: 'return=representation',
+      },
+      body: {
+        is_active: false,
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error(await getSupabaseErrorMessage(response, 'event-write'));
+    }
+
+    if (state.admin.editingEventId === eventId) {
+      state.admin.editingEventId = '';
+      state.admin.eventForm = createEmptyEventForm();
+    }
+
+    await loadLiveEvents();
+    setAdminNotice(`${calendarEvent.title} was deactivated.`, 'success');
+  } catch (error) {
+    setAdminNotice(error instanceof Error ? error.message : 'Could not deactivate that event.', 'error');
+  } finally {
+    state.admin.isBusy = false;
+    render();
+  }
+}
+
+function buildMemberPayload(formData, currentMember) {
+  const facebookName = cleanText(formData.get('facebook_name'));
+
+  if (!facebookName) {
+    throw new Error('Facebook name is required.');
+  }
+
+  const requestedRole = state.admin.staffProfile?.canManageRoles
+    ? normalizeGroupRole(formData.get('group_role'))
+    : normalizeGroupRole(currentMember?.groupRole);
+  const birthday = parseBirthdayInput(formData.get('birthday_raw'));
+
+  return {
+    facebook_name: facebookName,
+    in_game_name: normalizeNullableText(formData.get('in_game_name')),
+    house_key: normalizeNullableText(formData.get('house_key')),
+    birthday_raw: birthday.birthdayRaw,
+    birthday_month: birthday.birthdayMonth,
+    birthday_day: birthday.birthdayDay,
+    is_active: true,
+    notes: normalizeNullableText(formData.get('notes')),
+    group_role: requestedRole || 'member',
+  };
+}
+
+function buildEventPayload(formData) {
+  const title = cleanText(formData.get('title'));
+  const eventDate = cleanText(formData.get('event_date'));
+  const eventType = resolveSubmittedEventType(formData.get('event_type'), formData.get('custom_event_type'));
+  const startTime = normalizeEventTime(formData.get('start_time'));
+  const endTime = normalizeEventTime(formData.get('end_time'));
+  const timezone = cleanText(formData.get('timezone')) || DEFAULT_EVENT_TIMEZONE;
+  const hostName = cleanText(formData.get('host_name'));
+  const locationText = normalizeNullableText(formData.get('location_text'));
+  const details = normalizeNullableText(formData.get('details'));
+  const matchedMember = findMemberByName(hostName);
+
+  if (!title) {
+    throw new Error('Event title is required.');
+  }
+
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(eventDate)) {
+    throw new Error('Choose a valid event date.');
+  }
+
+  if (endTime && !startTime) {
+    throw new Error('Add a start time before adding an end time.');
+  }
+
+  if (startTime && endTime && endTime <= startTime) {
+    throw new Error('End time must be later than the start time.');
+  }
+
+  return {
+    title,
+    event_type: eventType,
+    event_date: eventDate,
+    start_time: startTime || null,
+    end_time: endTime || null,
+    timezone,
+    host_name: hostName || null,
+    host_member_id: matchedMember && isUuid(matchedMember.id) ? matchedMember.id : null,
+    location_text: locationText,
+    details,
+    yes_count: normalizeCountInput(formData.get('yes_count')),
+    maybe_count: normalizeCountInput(formData.get('maybe_count')),
+    no_count: normalizeCountInput(formData.get('no_count')),
+    is_active: true,
+  };
+}
+
+function buildWishlistPostPayload(formData, member) {
+  const summary = cleanText(formData.get('summary'));
+  const statusNote = cleanText(formData.get('status_note'));
+  const thankYouNote = cleanText(formData.get('thank_you_note'));
+
+  return {
+    member_id: member.id,
+    week_start_date: getCurrentWishlistWeekStartIso(),
+    member_name_snapshot: member.facebookName || member.displayName,
+    member_in_game_name_snapshot: normalizeNullableText(member.inGameName),
+    house_key_snapshot: normalizeNullableText(member.houseKey),
+    summary: summary || 'Weekly wishlist for the current Sunday reset.',
+    status_note: statusNote || 'Wishlist posted for this week.',
+    thank_you_note: normalizeNullableText(thankYouNote),
+    is_active: true,
+  };
+}
+
+function buildWishlistItemPayloads(formData, wishlistId) {
+  const payload = [];
+  let outOfStoreCount = 0;
+
+  for (let index = 0; index < WISHLIST_ITEM_SLOT_COUNT; index += 1) {
+    const itemName = cleanText(formData.get(`item_name_${index}`));
+    const imageUrlInput = cleanText(formData.get(`item_image_url_${index}`));
+    const sourceUrlInput = cleanText(formData.get(`item_source_url_${index}`));
+    const receivedFrom = cleanText(formData.get(`received_from_${index}`));
+    const availabilityStatus = normalizeWishlistAvailability(formData.get(`availability_status_${index}`));
+    const isReceived = formData.get(`is_received_${index}`) !== null;
+    const safeImageUrl = sanitizeUrl(imageUrlInput);
+    const safeSourceUrl = sanitizeUrl(sourceUrlInput);
+    const hasAnyValue = Boolean(itemName || imageUrlInput || sourceUrlInput || receivedFrom || isReceived);
+
+    if (!hasAnyValue) {
+      continue;
+    }
+
+    if (!itemName) {
+      throw new Error(`Item ${index + 1} needs a name before it can be saved.`);
+    }
+
+    if (imageUrlInput && !safeImageUrl) {
+      throw new Error(`Item ${index + 1} has an invalid image URL.`);
+    }
+
+    if (sourceUrlInput && !safeSourceUrl) {
+      throw new Error(`Item ${index + 1} has an invalid item source link.`);
+    }
+
+    if (availabilityStatus === 'out_of_store') {
+      outOfStoreCount += 1;
+    }
+
+    payload.push({
+      wishlist_id: wishlistId,
+      sort_order: payload.length + 1,
+      item_name: itemName,
+      item_image_url: safeImageUrl || null,
+      item_source_url: safeSourceUrl || null,
+      availability_status: availabilityStatus,
+      is_received: isReceived,
+      received_from: normalizeNullableText(receivedFrom),
+    });
+  }
+
+  if (!payload.length) {
+    throw new Error('Add at least one wishlist item before saving the board.');
+  }
+
+  if (outOfStoreCount > WISHLIST_OUT_OF_STORE_LIMIT) {
+    throw new Error(`Only ${WISHLIST_OUT_OF_STORE_LIMIT} items can be marked out of store each week.`);
+  }
+
+  return payload;
+}
+
+function parseBirthdayInput(value) {
+  const rawValue = cleanText(value);
+
+  if (!rawValue) {
+    return {
+      birthdayRaw: null,
+      birthdayMonth: null,
+      birthdayDay: null,
+    };
+  }
+
+  const match = rawValue.match(/^([A-Za-z]+)\s+(\d{1,2})$/);
+  const month = MONTH_NAME_TO_NUMBER[cleanText(match?.[1]).toLowerCase()];
+  const day = Number.parseInt(match?.[2] || '', 10);
+
+  if (!month || Number.isNaN(day) || day < 1 || day > 31) {
+    throw new Error('Birthday must look like "September 6" or be left blank.');
+  }
+
+  return {
+    birthdayRaw: `${MONTH_NAMES[month]} ${day}`,
+    birthdayMonth: month,
+    birthdayDay: day,
+  };
+}
+
+function normalizeNullableText(value) {
+  const text = cleanText(value);
+  return text || null;
+}
+
+async function loadLiveMembers() {
+  if (!hasSupabaseConfig) {
+    return;
+  }
+
+  try {
+    const query = new URLSearchParams({
+      select: '*',
+      is_active: 'eq.true',
+      order: 'facebook_name.asc',
+    }).toString();
+    const response = await supabaseFetch('members', { query, method: 'GET' });
+
+    if (!response.ok) {
+      throw new Error(await getSupabaseErrorMessage(response));
+    }
+
+    const rows = await response.json();
+
+    state.members = normalizeSupabaseMembers(Array.isArray(rows) ? rows : []);
+    state.memberSource = 'live';
+    state.memberSourceMessage = `Loaded ${state.members.length} active members from Supabase.`;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Could not load the live member directory.';
+    state.members = normalizeMockMembers(mockMembers);
+    state.memberSource = /private|policy|permission|forbidden|unauthorized/i.test(message) ? 'restricted' : 'error';
+    state.memberSourceMessage = message;
+  }
+
+  render();
+}
+
+async function loadLiveEvents() {
+  if (!hasSupabaseConfig) {
+    return;
+  }
+
+  try {
+    const query = new URLSearchParams({
+      select: 'id,title,event_type,event_date,start_time,end_time,timezone,host_name,host_member_id,location_text,details,yes_count,maybe_count,no_count,is_active',
+      is_active: 'eq.true',
+      order: 'event_date.asc,start_time.asc.nullslast,title.asc',
+    }).toString();
+    const response = await supabaseFetch('events', {
+      query,
+      method: 'GET',
+    });
+
+    if (!response.ok) {
+      throw new Error(await getSupabaseErrorMessage(response, 'events'));
+    }
+
+    const rows = await response.json();
+
+    state.events = normalizeSupabaseEvents(Array.isArray(rows) ? rows : []);
+    state.eventSource = 'live';
+    state.eventSourceMessage = `Loaded ${state.events.length} active events from Supabase.`;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Could not load the shared event calendar.';
+    state.events = normalizeMockEvents(mockHangouts);
+    state.eventSource = /private|policy|permission|forbidden|unauthorized/i.test(message) ? 'restricted' : 'error';
+    state.eventSourceMessage = message;
+  }
+
+  render();
+}
+
+async function loadLiveWishlists() {
+  if (!hasSupabaseConfig) {
+    return;
+  }
+
+  try {
+    const postsQuery = new URLSearchParams({
+      select:
+        'id,member_id,week_start_date,member_name_snapshot,member_in_game_name_snapshot,house_key_snapshot,summary,status_note,thank_you_note,is_active,created_at,updated_at',
+      week_start_date: `eq.${getCurrentWishlistWeekStartIso()}`,
+      is_active: 'eq.true',
+      order: 'updated_at.desc,member_name_snapshot.asc',
+    }).toString();
+    const postsResponse = await supabaseFetch('wishlist_posts', {
+      query: postsQuery,
+      method: 'GET',
+    });
+
+    if (!postsResponse.ok) {
+      throw new Error(await getSupabaseErrorMessage(postsResponse, 'wishlists'));
+    }
+
+    const wishlistRows = await postsResponse.json();
+    const normalizedPosts = Array.isArray(wishlistRows) ? wishlistRows : [];
+    let itemRows = [];
+
+    if (normalizedPosts.length) {
+      const wishlistIds = normalizedPosts
+        .map((row) => cleanText(row.id))
+        .filter(Boolean)
+        .join(',');
+
+      if (wishlistIds) {
+        const itemsQuery = new URLSearchParams({
+          select: 'id,wishlist_id,sort_order,item_name,item_image_url,item_source_url,availability_status,is_received,received_from',
+          wishlist_id: `in.(${wishlistIds})`,
+          order: 'wishlist_id.asc,sort_order.asc',
+        }).toString();
+        const itemsResponse = await supabaseFetch('wishlist_items', {
+          query: itemsQuery,
+          method: 'GET',
+        });
+
+        if (!itemsResponse.ok) {
+          throw new Error(await getSupabaseErrorMessage(itemsResponse, 'wishlists'));
+        }
+
+        const liveItems = await itemsResponse.json();
+        itemRows = Array.isArray(liveItems) ? liveItems : [];
+      }
+    }
+
+    state.wishlists = normalizeSupabaseWishlists(normalizedPosts, itemRows);
+    state.wishlistSource = 'live';
+    state.wishlistSourceMessage = `Loaded ${state.wishlists.length} active wishlists for this week.`;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Could not load the weekly wishlist board.';
+    state.wishlists = normalizeMockWishlists(mockWishlists);
+    state.wishlistSource = /private|policy|permission|forbidden|unauthorized/i.test(message) ? 'restricted' : 'error';
+    state.wishlistSourceMessage = message;
+  }
+
+  render();
+}
+
+async function getSupabaseErrorMessage(response, context = 'read') {
+  if (response.status === 401 || response.status === 403) {
+    if (context === 'write') {
+      return 'This signed-in account does not have permission to edit members yet.';
+    }
+
+    if (context === 'event-write') {
+      return 'This signed-in account does not have permission to edit events yet.';
+    }
+
+    if (context === 'staff') {
+      return 'Could not read staff permissions. Run supabase/07_admin_editor_auth_policies.sql after 05_member_roles_and_permissions.sql.';
+    }
+
+    if (context === 'events') {
+      return 'The events calendar is still private. Run supabase/08_events_calendar.sql when you are ready for browser reads.';
+    }
+
+    if (context === 'wishlists') {
+      return 'The weekly wishlist board is still private. Run supabase/11_weekly_wishlists.sql when you are ready for browser reads.';
+    }
+
+    if (context === 'wishlist-write') {
+      return 'This signed-in account does not have permission to edit wishlists yet.';
+    }
+
+    if (context === 'member-link') {
+      return 'This signed-in account does not have permission to link member logins yet.';
+    }
+
+    return 'The members table is still private. Run supabase/02_enable_member_directory_read.sql when you are ready for browser reads.';
+  }
+
+  if (response.status === 404) {
+    if (context === 'staff') {
+      return 'The staff permissions table is not available yet. Run supabase/05_member_roles_and_permissions.sql and then supabase/07_admin_editor_auth_policies.sql.';
+    }
+
+    if (context === 'events' || context === 'event-write') {
+      return 'The events table is not available yet. Run supabase/08_events_calendar.sql.';
+    }
+
+    if (context === 'wishlists' || context === 'wishlist-write' || context === 'member-link') {
+      return 'The weekly wishlist tables are not available yet. Run supabase/11_weekly_wishlists.sql.';
+    }
+
+    return 'The members table is not available yet. Run the schema SQL and confirm the table exists in Supabase.';
+  }
+
+  try {
+    const payload = await response.json();
+    return payload.message || payload.error_description || payload.error || `Supabase returned ${response.status}.`;
+  } catch {
+    return `Supabase returned ${response.status}.`;
+  }
+}
+
+function normalizeMockMembers(sourceMembers) {
+  return sourceMembers.map((member, index) => normalizeMockMember(member, index));
+}
+
+function normalizeMockWishlists(sourceWishlists, memberDirectory = []) {
+  return sourceWishlists.map((wishlist, index) => normalizeMockWishlist(wishlist, index, memberDirectory));
+}
+
+function normalizeMockWishlist(wishlist, index, memberDirectory = []) {
+  const wishlistId = cleanText(wishlist.id) || `wishlist-${index + 1}`;
+  const memberName = cleanText(wishlist.memberName || wishlist.member || `Wishlist ${index + 1}`);
+  const matchedMember = findMemberByName(memberName, memberDirectory);
+
+  return buildWishlistModel(
+    {
+      id: wishlistId,
+      memberId: cleanText(wishlist.memberId || matchedMember?.id),
+      memberName,
+      inGameName: cleanText(wishlist.inGameName || matchedMember?.inGameName),
+      houseKey: cleanText(wishlist.houseKey || matchedMember?.houseKey),
+      homeLink: sanitizeUrl(cleanText(wishlist.homeLink || matchedMember?.homeLink)),
+      imageUrl: buildAssetUrl(wishlist.imagePath || wishlist.imageUrl),
+      weekStartDate: cleanText(wishlist.weekStartDate) || getCurrentWishlistWeekStartIso(),
+      weekLabel: cleanText(wishlist.weekLabel),
+      summary: cleanText(wishlist.summary),
+      statusNote: cleanText(wishlist.statusNote || wishlist.updateNote),
+      thankYouNote: cleanText(wishlist.thankYouNote),
+      thankYouTo: Array.isArray(wishlist.thankYouTo)
+        ? wishlist.thankYouTo.map((name) => cleanText(name)).filter(Boolean)
+        : [],
+      lastUpdatedLabel: cleanText(wishlist.lastUpdatedLabel),
+      isActive: wishlist.isActive !== false,
+      items: normalizeWishlistItems(wishlist.items, wishlistId),
+      updatedAt: cleanText(wishlist.updatedAt),
+      createdAt: cleanText(wishlist.createdAt),
+    },
+    index,
+  );
+}
+
+function normalizeMockEvents(sourceEvents) {
+  return sourceEvents.map((calendarEvent, index) => normalizeMockEvent(calendarEvent, index));
+}
+
+function normalizeMockEvent(calendarEvent, index) {
+  const title = cleanText(calendarEvent.title) || `Event ${index + 1}`;
+  const eventTypeDetails = getEventTypeDetails(calendarEvent.eventType || calendarEvent.type);
+  const eventDate = cleanText(calendarEvent.eventDate);
+  const startTime = normalizeEventTime(calendarEvent.startTime);
+  const endTime = normalizeEventTime(calendarEvent.endTime);
+  const timezone = cleanText(calendarEvent.timezone) || DEFAULT_EVENT_TIMEZONE;
+
+  return {
+    id: cleanText(calendarEvent.id) || `event-${index + 1}`,
+    title,
+    eventType: eventTypeDetails.storedValue || EVENT_TYPE_DETAILS.special_event.label,
+    eventTypeLabel: eventTypeDetails.label,
+    typeIndicator: eventTypeDetails.indicator,
+    typeIndicatorClass: eventTypeDetails.className,
+    eventDate,
+    startTime,
+    endTime,
+    timezone,
+    whenLabel: cleanText(calendarEvent.when) || formatEventWhenLabel(eventDate, startTime, endTime, timezone),
+    hostName: cleanText(calendarEvent.host || calendarEvent.hostName),
+    locationText: cleanText(calendarEvent.locationText || calendarEvent.location),
+    details: cleanText(calendarEvent.details || calendarEvent.note),
+    yesCount: normalizeEventCount(calendarEvent.yes),
+    maybeCount: normalizeEventCount(calendarEvent.maybe),
+    noCount: normalizeEventCount(calendarEvent.no),
+    isActive: calendarEvent.isActive !== false,
+    sortOrder: index,
+  };
+}
+
+function normalizeMockMember(member, index) {
+  const facebookName = cleanText(member.facebookName || member.name) || `Member ${index + 1}`;
+  const inGameName = cleanText(member.inGameName);
+  const groupRole = normalizeGroupRole(member.groupRole);
+  const playWindow = cleanText(member.playWindow);
+  const notes = cleanText(member.notes || member.status);
+
+  return {
+    id: cleanText(member.id) || createClientMemberId(facebookName),
+    displayName: facebookName,
+    facebookName,
+    inGameName,
+    secondaryName: inGameName ? `YoWorld: ${inGameName}` : 'YoWorld name not added yet.',
+    homeLink: sanitizeUrl(cleanText(member.homeLink)),
+    houseKey: cleanText(member.houseKey),
+    birthdayRaw: cleanText(member.birthday),
+    birthdayLabel: cleanText(member.birthday) || 'Birthday not added',
+    birthdayMonth: null,
+    birthdayDay: null,
+    hasBirthday: Boolean(cleanText(member.birthday)),
+    groupRole,
+    roleLabel: formatGroupRoleLabel(groupRole),
+    roleTagClass: getRoleTagClass(groupRole),
+    statusText: notes || 'Member details coming soon.',
+    notes,
+    isActive: true,
+    metaText: playWindow ? `Usually online: ${playWindow}` : 'Using mock member details.',
+  };
+}
+
+function normalizeSupabaseMembers(rows) {
+  return rows.map((row, index) => normalizeSupabaseMember(row, index));
+}
+
+function normalizeSupabaseWishlists(rows, itemRows) {
+  const itemsByWishlistId = new Map();
+
+  itemRows.forEach((row) => {
+    const wishlistId = cleanText(row.wishlist_id);
+
+    if (!wishlistId) {
+      return;
+    }
+
+    const currentItems = itemsByWishlistId.get(wishlistId) || [];
+    currentItems.push(row);
+    itemsByWishlistId.set(wishlistId, currentItems);
+  });
+
+  return rows.map((row, index) => normalizeSupabaseWishlist(row, index, itemsByWishlistId.get(cleanText(row.id)) || []));
+}
+
+function normalizeSupabaseEvents(rows) {
+  return rows.map((row, index) => normalizeSupabaseEvent(row, index));
+}
+
+function normalizeSupabaseWishlist(row, index, itemRows) {
+  const fallbackMember = findMemberById(row.member_id);
+
+  return buildWishlistModel(
+    {
+      id: cleanText(row.id) || `wishlist-live-${index + 1}`,
+      memberId: cleanText(row.member_id) || cleanText(fallbackMember?.id),
+      memberName: cleanText(row.member_name_snapshot || fallbackMember?.facebookName || fallbackMember?.displayName || `Wishlist ${index + 1}`),
+      inGameName: cleanText(row.member_in_game_name_snapshot || fallbackMember?.inGameName),
+      houseKey: cleanText(row.house_key_snapshot || fallbackMember?.houseKey),
+      homeLink: buildHomeLink(cleanText(row.house_key_snapshot || fallbackMember?.houseKey)),
+      weekStartDate: cleanText(row.week_start_date),
+      summary: cleanText(row.summary),
+      statusNote: cleanText(row.status_note),
+      thankYouNote: cleanText(row.thank_you_note),
+      isActive: row.is_active !== false,
+      items: normalizeWishlistItems(itemRows, cleanText(row.id) || `wishlist-live-${index + 1}`),
+      updatedAt: cleanText(row.updated_at),
+      createdAt: cleanText(row.created_at),
+    },
+    index,
+  );
+}
+
+function normalizeSupabaseEvent(row, index) {
+  const eventTypeDetails = getEventTypeDetails(row.event_type);
+  const eventDate = cleanText(row.event_date);
+  const startTime = normalizeEventTime(row.start_time);
+  const endTime = normalizeEventTime(row.end_time);
+  const timezone = cleanText(row.timezone) || DEFAULT_EVENT_TIMEZONE;
+
+  return {
+    id: cleanText(row.id) || `event-${index + 1}`,
+    title: cleanText(row.title) || `Event ${index + 1}`,
+    eventType: eventTypeDetails.storedValue || EVENT_TYPE_DETAILS.special_event.label,
+    eventTypeLabel: eventTypeDetails.label,
+    typeIndicator: eventTypeDetails.indicator,
+    typeIndicatorClass: eventTypeDetails.className,
+    eventDate,
+    startTime,
+    endTime,
+    timezone,
+    whenLabel: formatEventWhenLabel(eventDate, startTime, endTime, timezone),
+    hostName: cleanText(row.host_name),
+    locationText: cleanText(row.location_text),
+    details: cleanText(row.details),
+    yesCount: normalizeEventCount(row.yes_count),
+    maybeCount: normalizeEventCount(row.maybe_count),
+    noCount: normalizeEventCount(row.no_count),
+    isActive: row.is_active !== false,
+    sortOrder: index,
+  };
+}
+
+function normalizeSupabaseMember(row, index) {
+  const facebookName = cleanText(row.facebook_name);
+  const inGameName = cleanText(row.in_game_name);
+  const displayName = facebookName || inGameName || `Member ${index + 1}`;
+  const birthdayRaw = cleanText(row.birthday_raw);
+  const birthdayMonth = parseNullableInt(row.birthday_month);
+  const birthdayDay = parseNullableInt(row.birthday_day);
+  const notes = cleanText(row.notes);
+  const houseKey = cleanText(row.house_key);
+  const homeLink = buildHomeLink(houseKey);
+  const groupRole = normalizeGroupRole(row.group_role);
+
+  return {
+    id: cleanText(row.id) || createClientMemberId(displayName),
+    displayName,
+    facebookName: facebookName || displayName,
+    inGameName,
+    secondaryName: inGameName ? `YoWorld: ${inGameName}` : 'YoWorld name not added yet.',
+    homeLink,
+    houseKey,
+    birthdayRaw,
+    birthdayLabel: formatBirthdayLabel(birthdayRaw, birthdayMonth, birthdayDay),
+    birthdayMonth,
+    birthdayDay,
+    hasBirthday: Boolean(birthdayRaw || (birthdayMonth && birthdayDay)),
+    groupRole,
+    roleLabel: formatGroupRoleLabel(groupRole),
+    roleTagClass: getRoleTagClass(groupRole),
+    statusText:
+      notes ||
+      (groupRole !== 'member'
+        ? `Role: ${formatGroupRoleLabel(groupRole)}`
+        : homeLink
+          ? 'Home link ready for visits and gifts.'
+          : 'Home link not added yet.'),
+    metaText: getMemberMetaText({ notes, homeLink, groupRole }),
+    notes,
+    isActive: row.is_active !== false,
+  };
+}
+
+function getMemberMetaText({ notes, homeLink, groupRole }) {
+  if (notes) {
+    return notes;
+  }
+
+  if (groupRole && groupRole !== 'member') {
+    return `Group role: ${formatGroupRoleLabel(groupRole)}`;
+  }
+
+  if (!homeLink) {
+    return 'Home link not added yet.';
+  }
+
+  return '';
+}
+
+function normalizeEventTypeToken(value) {
+  return cleanText(value)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+}
+
+function getPresetEventTypeKey(value) {
+  switch (normalizeEventTypeToken(value)) {
+    case 'birthday_party':
+      return 'birthday_party';
+    case 'meet_up':
+    case 'meetup':
+    case 'hangout':
+      return 'meet_up';
+    case 'game':
+      return 'game';
+    case 'special_event':
+    case 'party':
+    case 'other':
+    case 'wishlist':
+      return 'special_event';
+    case CUSTOM_EVENT_TYPE_KEY:
+      return CUSTOM_EVENT_TYPE_KEY;
+    case '':
+      return 'special_event';
+    default:
+      return CUSTOM_EVENT_TYPE_KEY;
+  }
+}
+
+function formatCustomEventTypeLabel(value) {
+  return cleanText(value).replace(/[_-]+/g, ' ').replace(/\s+/g, ' ');
+}
+
+function getCustomEventTypeIndicator(value) {
+  const label = formatCustomEventTypeLabel(value);
+  const match = label.match(/[A-Za-z0-9]/);
+  return match ? match[0].toUpperCase() : '*';
+}
+
+function getEventTypeDetails(value) {
+  const rawValue = cleanText(value);
+  const presetKey = getPresetEventTypeKey(rawValue);
+
+  if (presetKey !== CUSTOM_EVENT_TYPE_KEY) {
+    const preset = EVENT_TYPE_DETAILS[presetKey];
+    return {
+      id: presetKey,
+      label: preset.label,
+      indicator: preset.indicator,
+      className: preset.className,
+      isCustom: false,
+      storedValue: preset.label,
+    };
+  }
+
+  const label = formatCustomEventTypeLabel(rawValue);
+
+  return {
+    id: CUSTOM_EVENT_TYPE_KEY,
+    label: label || 'Custom Event',
+    indicator: getCustomEventTypeIndicator(label),
+    className: 'event-type-icon--custom',
+    isCustom: true,
+    storedValue: label,
+  };
+}
+
+function normalizeEventType(value) {
+  return getEventTypeDetails(value).id;
+}
+
+function formatEventTypeLabel(eventType) {
+  return getEventTypeDetails(eventType).label;
+}
+
+function getEventTypeIndicator(eventType) {
+  return getEventTypeDetails(eventType).indicator;
+}
+
+function getEventTypeIndicatorClass(eventType) {
+  return getEventTypeDetails(eventType).className;
+}
+
+function resolveSubmittedEventType(selectedEventType, customEventType) {
+  if (getPresetEventTypeKey(selectedEventType) === CUSTOM_EVENT_TYPE_KEY) {
+    const customLabel = formatCustomEventTypeLabel(customEventType);
+
+    if (!customLabel) {
+      throw new Error('Add a custom event type name or choose one of the built-in event types.');
+    }
+
+    return customLabel;
+  }
+
+  return getEventTypeDetails(selectedEventType).storedValue || EVENT_TYPE_DETAILS.special_event.label;
+}
+
+function formatEventWhenLabel(eventDate, startTime, endTime, timezone) {
+  const dateLabel = formatEventDateLabel(eventDate);
+
+  if (!dateLabel) {
+    return 'Date coming soon';
+  }
+
+  if (!startTime) {
+    return `${dateLabel} • All day`;
+  }
+
+  const startLabel = formatTimeLabel(startTime);
+  const endLabel = formatTimeLabel(endTime);
+  const timezoneLabel = cleanText(timezone);
+
+  if (endLabel) {
+    return `${dateLabel} • ${startLabel} - ${endLabel}${timezoneLabel ? ` ${timezoneLabel}` : ''}`;
+  }
+
+  return `${dateLabel} • ${startLabel}${timezoneLabel ? ` ${timezoneLabel}` : ''}`;
+}
+
+function formatEventDateLabel(eventDate) {
+  const value = cleanText(eventDate);
+
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    return '';
+  }
+
+  const [year, month, day] = value.split('-').map((part) => Number.parseInt(part, 10));
+  const date = new Date(year, month - 1, day);
+
+  return date.toLocaleString('en-US', {
+    weekday: 'short',
+    month: 'long',
+    day: 'numeric',
+  });
+}
+
+function formatMonthYearLabel(year, monthIndex) {
+  return new Date(year, monthIndex, 1).toLocaleString('en-US', {
+    month: 'long',
+    year: 'numeric',
+  });
+}
+
+function parseIsoDateParts(value) {
+  const match = cleanText(value).match(/^(\d{4})-(\d{2})-(\d{2})$/);
+
+  if (!match) {
+    return null;
+  }
+
+  const year = Number.parseInt(match[1], 10);
+  const month = Number.parseInt(match[2], 10);
+  const day = Number.parseInt(match[3], 10);
+
+  if (!year || month < 1 || month > 12 || day < 1 || day > 31) {
+    return null;
+  }
+
+  return {
+    year,
+    month,
+    monthIndex: month - 1,
+    day,
+  };
+}
+
+function formatTimeLabel(value) {
+  const normalized = normalizeEventTime(value);
+
+  if (!normalized) {
+    return '';
+  }
+
+  const [hours, minutes] = normalized.split(':').map((part) => Number.parseInt(part, 10));
+  const date = new Date(2000, 0, 1, hours, minutes);
+
+  return date.toLocaleString('en-US', {
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+}
+
+function normalizeEventTime(value) {
+  const text = cleanText(value);
+
+  if (!text) {
+    return '';
+  }
+
+  const match = text.match(/^(\d{1,2}):(\d{2})(?::\d{2})?$/);
+
+  if (!match) {
+    return '';
+  }
+
+  const hours = Number.parseInt(match[1], 10);
+  const minutes = Number.parseInt(match[2], 10);
+
+  if (hours < 0 || hours > 23 || minutes < 0 || minutes > 59) {
+    return '';
+  }
+
+  return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
+}
+
+function compareEvents(left, right) {
+  const leftDate = cleanText(left.eventDate) || '9999-12-31';
+  const rightDate = cleanText(right.eventDate) || '9999-12-31';
+
+  if (leftDate !== rightDate) {
+    return leftDate.localeCompare(rightDate);
+  }
+
+  const leftTime = normalizeEventTime(left.startTime) || '23:59';
+  const rightTime = normalizeEventTime(right.startTime) || '23:59';
+
+  if (leftTime !== rightTime) {
+    return leftTime.localeCompare(rightTime);
+  }
+
+  return left.title.localeCompare(right.title) || left.sortOrder - right.sortOrder;
+}
+
+function compareWishlists(left, right) {
+  if (left.isActive !== right.isActive) {
+    return left.isActive ? -1 : 1;
+  }
+
+  const leftWeekStart = cleanText(left.weekStartDate) || '0000-00-00';
+  const rightWeekStart = cleanText(right.weekStartDate) || '0000-00-00';
+
+  if (leftWeekStart !== rightWeekStart) {
+    return rightWeekStart.localeCompare(leftWeekStart);
+  }
+
+  return left.memberName.localeCompare(right.memberName) || left.sortOrder - right.sortOrder;
+}
+
+function normalizeWishlistItems(items, parentId = '') {
+  return Array.isArray(items)
+    ? items
+        .map((item, index) => normalizeWishlistItem(item, index, parentId))
+        .filter((item) => Boolean(item.name || item.imageUrl || item.sourceUrl || item.receivedFrom || item.isReceived))
+        .sort((left, right) => left.sortOrder - right.sortOrder)
+    : [];
+}
+
+function normalizeWishlistItem(item, index, parentId = '') {
+  return {
+    id: cleanText(item?.id) || `${parentId || 'wishlist'}-item-${index + 1}`,
+    name: cleanText(item?.item_name || item?.name),
+    imageUrl: buildAssetUrl(item?.item_image_url || item?.imageUrl),
+    sourceUrl: sanitizeUrl(cleanText(item?.item_source_url || item?.sourceUrl)),
+    availabilityStatus: normalizeWishlistAvailability(item?.availability_status || item?.availabilityStatus),
+    isReceived: Boolean(item?.is_received ?? item?.isReceived),
+    receivedFrom: cleanText(item?.received_from || item?.receivedFrom),
+    sortOrder: parseNullableInt(item?.sort_order || item?.sortOrder) || index + 1,
+  };
+}
+
+function buildWishlistModel(values, index) {
+  const items = normalizeWishlistItems(values.items, values.id);
+  const thankYouTo = Array.isArray(values.thankYouTo)
+    ? [...new Set(values.thankYouTo.map((name) => cleanText(name)).filter(Boolean))]
+    : [];
+  const weekStartDate = cleanText(values.weekStartDate) || getCurrentWishlistWeekStartIso();
+  const homeLink = sanitizeUrl(cleanText(values.homeLink)) || buildHomeLink(values.houseKey);
+  const totalItems = items.length;
+  const outOfStoreCount = items.filter((item) => item.availabilityStatus === 'out_of_store').length;
+  const receivedCount = items.filter((item) => item.isReceived).length;
+  const thankYouSummary = thankYouTo.length
+    ? `Thanked ${thankYouTo.length} ${thankYouTo.length === 1 ? 'gifter' : 'gifters'}`
+    : cleanText(values.thankYouNote)
+      ? 'Public thank-you note posted'
+      : 'No thank-you notes yet';
+
+  return {
+    id: cleanText(values.id) || `wishlist-${index + 1}`,
+    memberId: cleanText(values.memberId),
+    memberName: cleanText(values.memberName) || `Wishlist ${index + 1}`,
+    inGameName: cleanText(values.inGameName),
+    houseKey: cleanText(values.houseKey),
+    homeLink,
+    imageUrl: buildAssetUrl(values.imageUrl),
+    weekStartDate,
+    weekLabel: cleanText(values.weekLabel) || formatWishlistWeekLabel(weekStartDate),
+    summary: cleanText(values.summary) || 'Weekly wishlist for the current Sunday reset.',
+    statusNote: cleanText(values.statusNote) || 'Wishlist posted for this week.',
+    updateNote: cleanText(values.statusNote) || 'Wishlist posted for this week.',
+    thankYouNote: cleanText(values.thankYouNote),
+    thankYouTo,
+    thankYouSummary,
+    lastUpdatedLabel: cleanText(values.lastUpdatedLabel) || formatWishlistLastUpdatedLabel(values.updatedAt || values.createdAt),
+    updatedAt: cleanText(values.updatedAt),
+    createdAt: cleanText(values.createdAt),
+    isActive: values.isActive !== false,
+    items,
+    totalItems,
+    outOfStoreCount,
+    receivedCount,
+    sortOrder: index,
+  };
+}
+
+function summarizeWishlistItems(items) {
+  const normalizedItems = Array.isArray(items) ? items : [];
+
+  return normalizedItems.reduce(
+    (summary, item) => {
+      const hasContent = Boolean(cleanText(item?.name) || cleanText(item?.imageUrl) || cleanText(item?.sourceUrl) || cleanText(item?.receivedFrom) || item?.isReceived);
+
+      if (!hasContent) {
+        return summary;
+      }
+
+      return {
+        total: summary.total + 1,
+        outOfStore: summary.outOfStore + (normalizeWishlistAvailability(item?.availabilityStatus) === 'out_of_store' ? 1 : 0),
+        received: summary.received + (item?.isReceived ? 1 : 0),
+      };
+    },
+    { total: 0, outOfStore: 0, received: 0 },
+  );
+}
+
+function normalizeWishlistAvailability(value) {
+  return cleanText(value).toLowerCase() === 'out_of_store' ? 'out_of_store' : 'in_store';
+}
+
+function formatWishlistAvailabilityLabel(value) {
+  return normalizeWishlistAvailability(value) === 'out_of_store' ? 'Out of Store' : 'In Store';
+}
+
+function getCurrentWishlistWeekStartIso(now = new Date()) {
+  const formatter = new Intl.DateTimeFormat('en-US', {
+    timeZone: WISHLIST_TIMEZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    weekday: 'short',
+  });
+  const parts = formatter.formatToParts(now);
+  const year = Number.parseInt(parts.find((part) => part.type === 'year')?.value || '', 10);
+  const month = Number.parseInt(parts.find((part) => part.type === 'month')?.value || '', 10);
+  const day = Number.parseInt(parts.find((part) => part.type === 'day')?.value || '', 10);
+  const weekdayToken = cleanText(parts.find((part) => part.type === 'weekday')?.value).slice(0, 3).toLowerCase();
+  const weekdayIndex = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'].indexOf(weekdayToken);
+  const etDate = new Date(Date.UTC(year, month - 1, day));
+
+  etDate.setUTCDate(etDate.getUTCDate() - Math.max(weekdayIndex, 0));
+
+  return `${etDate.getUTCFullYear()}-${String(etDate.getUTCMonth() + 1).padStart(2, '0')}-${String(etDate.getUTCDate()).padStart(2, '0')}`;
+}
+
+function isWishlistCurrentWeek(weekStartDate) {
+  return cleanText(weekStartDate) === getCurrentWishlistWeekStartIso();
+}
+
+function formatWishlistWeekLabel(weekStartDate) {
+  const parts = parseIsoDateParts(weekStartDate);
+
+  if (!parts) {
+    return 'Resets Sunday ET';
+  }
+
+  const date = new Date(parts.year, parts.monthIndex, parts.day);
+  const label = date.toLocaleString('en-US', {
+    month: 'long',
+    day: 'numeric',
+  });
+
+  return `Week of ${label} • Sunday ET reset`;
+}
+
+function formatWishlistLastUpdatedLabel(value) {
+  const normalizedValue = cleanText(value);
+
+  if (!normalizedValue) {
+    return 'Updated this week';
+  }
+
+  const parsedDate = new Date(normalizedValue);
+
+  if (Number.isNaN(parsedDate.getTime())) {
+    return 'Updated this week';
+  }
+
+  return `Updated ${parsedDate.toLocaleString('en-US', { month: 'short', day: 'numeric' })}`;
+}
+
+function normalizeEventCount(value) {
+  const parsed = Number.parseInt(value ?? 0, 10);
+  return Number.isNaN(parsed) || parsed < 0 ? 0 : parsed;
+}
+
+function normalizeCountInput(value) {
+  const text = cleanText(value);
+
+  if (!text) {
+    return 0;
+  }
+
+  const parsed = Number.parseInt(text, 10);
+
+  if (Number.isNaN(parsed) || parsed < 0) {
+    throw new Error('Event RSVP counts must be zero or greater.');
+  }
+
+  return parsed;
+}
+
+function buildAssetUrl(value) {
+  const rawValue = cleanText(value);
+
+  if (!rawValue) {
+    return '';
+  }
+
+  try {
+    return new URL(rawValue, window.location.href).href;
+  } catch {
+    return '';
+  }
+}
+
+function getDefaultEventDescription(eventType) {
+  switch (normalizeEventType(eventType)) {
+    case 'birthday_party':
+      return 'A shared birthday party event for the group.';
+    case 'game':
+      return 'A game session for the group.';
+    case 'meet_up':
+      return 'A meet-up for the group to gather in game.';
+    case 'special_event':
+      return 'A shared special event for the group.';
+    case CUSTOM_EVENT_TYPE_KEY:
+    default:
+      return 'A shared event for the group.';
+  }
+}
+
+function findMemberByName(value, members = getMembers()) {
+  const lookup = cleanText(value).toLowerCase();
+
+  if (!lookup) {
+    return null;
+  }
+
+  return members.find((member) => {
+    return [member.facebookName, member.displayName, member.inGameName]
+      .map((name) => cleanText(name).toLowerCase())
+      .includes(lookup);
+  }) || null;
+}
+
+function findMemberById(memberId) {
+  const normalizedMemberId = cleanText(memberId);
+
+  if (!normalizedMemberId) {
+    return null;
+  }
+
+  return getMembers().find((member) => cleanText(member.id) === normalizedMemberId) || null;
+}
+
+function normalizeGroupRole(value) {
+  const normalized = cleanText(value).toLowerCase().replace(/[-\s]+/g, '_');
+
+  switch (normalized) {
+    case 'admin':
+    case 'event_planner':
+    case 'moderator':
+    case 'helper':
+      return normalized;
+    case '':
+    case 'member':
+    default:
+      return 'member';
+  }
+}
+
+function isUuid(value) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(cleanText(value));
+}
+
+function formatGroupRoleLabel(role) {
+  switch (normalizeGroupRole(role)) {
+    case 'admin':
+      return 'Admin';
+    case 'event_planner':
+      return 'Event Planner';
+    case 'moderator':
+      return 'Moderator';
+    case 'helper':
+      return 'Helper';
+    case 'member':
+    default:
+      return 'Member';
+  }
+}
+
+function getRoleTagClass(role) {
+  switch (normalizeGroupRole(role)) {
+    case 'admin':
+      return 'tag--role-admin';
+    case 'event_planner':
+      return 'tag--role-event';
+    case 'moderator':
+      return 'tag--role-moderator';
+    case 'helper':
+      return 'tag--role-helper';
+    case 'member':
+    default:
+      return 'tag--muted';
+  }
+}
+
+function buildHomeLink(houseKey) {
+  const normalizedKey = cleanText(houseKey);
+
+  if (!normalizedKey) {
+    return '';
+  }
+
+  if (/^https?:\/\//i.test(normalizedKey)) {
+    return sanitizeUrl(normalizedKey);
+  }
+
+  if (/^APKitchen-/i.test(normalizedKey)) {
+    return sanitizeUrl(`https://apps.facebook.com/playyoworld/?d=${encodeURIComponent(normalizedKey)}`);
+  }
+
+  return sanitizeUrl(`https://yoworld.com/?d=${encodeURIComponent(normalizedKey)}`);
+}
+
+function formatBirthdayLabel(birthdayRaw, birthdayMonth, birthdayDay) {
+  const rawValue = cleanText(birthdayRaw);
+
+  if (rawValue) {
+    return rawValue;
+  }
+
+  if (birthdayMonth && birthdayDay) {
+    return formatMonthDay(birthdayMonth, birthdayDay);
+  }
+
+  return 'Birthday not added';
+}
+
+function formatMonthDay(month, day) {
+  const safeMonth = parseNullableInt(month);
+  const safeDay = parseNullableInt(day);
+
+  if (!safeMonth || !safeDay) {
+    return 'Birthday not added';
+  }
+
+  const date = new Date(2000, safeMonth - 1, safeDay);
+  return date.toLocaleString('en-US', {
+    month: 'long',
+    day: 'numeric',
+  });
+}
+
+function compareUpcomingBirthdays(left, right) {
+  const leftOffset = getBirthdayOffset(left);
+  const rightOffset = getBirthdayOffset(right);
+
+  if (leftOffset !== rightOffset) {
+    return leftOffset - rightOffset;
+  }
+
+  return (left.facebookName || left.displayName).localeCompare(right.facebookName || right.displayName);
+}
+
+function getBirthdayOffset(member) {
+  if (!member.hasBirthday || !member.birthdayMonth || !member.birthdayDay) {
+    return Number.POSITIVE_INFINITY;
+  }
+
+  const today = new Date();
+  const currentYear = today.getFullYear();
+  const todayAtMidnight = new Date(currentYear, today.getMonth(), today.getDate());
+  let nextBirthday = new Date(currentYear, member.birthdayMonth - 1, member.birthdayDay);
+
+  if (nextBirthday < todayAtMidnight) {
+    nextBirthday = new Date(currentYear + 1, member.birthdayMonth - 1, member.birthdayDay);
+  }
+
+  return nextBirthday.getTime() - todayAtMidnight.getTime();
+}
+
+function parseNullableInt(value) {
+  if (value === null || value === undefined || value === '') {
+    return null;
+  }
+
+  const parsed = Number.parseInt(value, 10);
+  return Number.isNaN(parsed) ? null : parsed;
+}
+
+function cleanText(value) {
+  return String(value ?? '').trim();
+}
+
+function createClientMemberId(value) {
+  return cleanText(value)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '') || 'member';
+}
+
+function sanitizeUrl(value) {
+  const rawValue = cleanText(value);
+
+  if (!rawValue) {
+    return '';
+  }
+
+  try {
+    const parsed = new URL(rawValue, window.location.href);
+    return /^https?:$/i.test(parsed.protocol) ? parsed.href : '';
+  } catch {
+    return '';
+  }
+}
+
+function buildPasswordResetRedirectUrl() {
+  const url = new URL(window.location.href);
+  const authParams = [
+    'access_token',
+    'refresh_token',
+    'expires_at',
+    'expires_in',
+    'token_type',
+    'type',
+    'error',
+    'error_code',
+    'error_description',
+  ];
+
+  authParams.forEach((key) => url.searchParams.delete(key));
+  url.hash = '';
+
+  return url.toString();
+}
+
+function escapeHtml(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function loadPrivateState() {
+  try {
+    const stored = window.localStorage.getItem(STORAGE_KEY);
+    return stored ? { ...defaultPrivateState, ...JSON.parse(stored) } : defaultPrivateState;
+  } catch {
+    return defaultPrivateState;
+  }
+}
+
+function savePrivateState() {
+  window.localStorage.setItem(STORAGE_KEY, JSON.stringify(state.privateData));
+}

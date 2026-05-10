@@ -1,6 +1,7 @@
 window.YAWL_DATA = {
   sections: [
     { id: 'dashboard', label: 'This Week' },
+    { id: 'wishlists', label: 'Wish Lists' },
     { id: 'members', label: 'Members' },
     { id: 'birthdays', label: 'Birthdays' },
     { id: 'giveaways', label: 'Giveaways' },
@@ -55,10 +56,10 @@ window.YAWL_DATA = {
   dashboard: {
     weekLabel: 'Week of May 5',
     announcement:
-      'Wishlist uploads open Sunday night. Admins will manage member records, home links, and shared boards for v1.',
+      'Wish list uploads open Sunday night. Linked member accounts can now post their own weekly boards while admins keep member records and home links organized.',
     facebookThreadUrl: '',
     stats: [
-      { label: 'Wishlists posted', value: '14 / 39' },
+      { label: 'Wish Lists posted', value: '14 / 39' },
       { label: 'Birthdays soon', value: '2' },
       { label: 'Open giveaways', value: '6' },
       { label: 'Upcoming events', value: '4' },
@@ -69,6 +70,69 @@ window.YAWL_DATA = {
       { member: 'Nova June', detail: 'Stage lights, ballroom rugs, silver stools' },
     ],
   },
+
+  wishlists: [
+    {
+      id: 'wishlist-gothicka',
+      memberName: 'Gothicka',
+      inGameName: 'Gothicka',
+      imagePath: 'Example Wish Lists/gothicka.jpg',
+      weekLabel: 'Resets Sunday ET',
+      summary: 'Weekly wish list board with live thank-you updates for received gifts.',
+      updateNote: 'Board refreshed after gifts started coming in this week.',
+      thankYouTo: ['Lady Purple', 'Arii', 'Jami', 'Corinne', 'Sadiez', 'Cynna', 'Hween Junkie', 'Chua'],
+      lastUpdatedLabel: 'Updated tonight',
+      isActive: true,
+    },
+    {
+      id: 'wishlist-jessi',
+      memberName: 'Jessi',
+      inGameName: 'Jessi',
+      imagePath: 'Example Wish Lists/jessi.jpg',
+      weekLabel: 'Resets Sunday ET',
+      summary: 'Clean visual wish list showing in-store checks and current wants for the week.',
+      updateNote: 'Still shopping for spooky decor and animated portraits.',
+      thankYouTo: [],
+      lastUpdatedLabel: 'Updated this week',
+      isActive: true,
+    },
+    {
+      id: 'wishlist-aero',
+      memberName: 'Aero',
+      inGameName: 'Aero',
+      imagePath: 'Example Wish Lists/aero.jpg',
+      weekLabel: 'Resets Sunday ET',
+      summary: 'Shared board posted for the current week with room for gift updates and thank-yous.',
+      updateNote: 'Fresh board posted for this Sunday reset.',
+      thankYouTo: ['Jessi'],
+      lastUpdatedLabel: 'Posted Sunday ET',
+      isActive: true,
+    },
+    {
+      id: 'wishlist-mirna',
+      memberName: 'Mirna',
+      inGameName: 'Mirna',
+      imagePath: 'Example Wish Lists/mirna.jpg',
+      weekLabel: 'Resets Sunday ET',
+      summary: 'Active weekly board ready for gifts, edits, and thank-you tracking.',
+      updateNote: 'Waiting on this week\'s item updates.',
+      thankYouTo: ['Gothicka'],
+      lastUpdatedLabel: 'Updated yesterday',
+      isActive: true,
+    },
+    {
+      id: 'wishlist-tooechi',
+      memberName: 'Tooechi',
+      inGameName: 'Tooechi',
+      imagePath: 'Example Wish Lists/tooechi.jpg',
+      weekLabel: 'Resets Sunday ET',
+      summary: 'Weekly wish list board with a thread-style note area for thanks and edits.',
+      updateNote: 'Needs a fresh image after the next round of gifts.',
+      thankYouTo: ['Mirna', 'Aero'],
+      lastUpdatedLabel: 'Updated Sunday ET',
+      isActive: true,
+    },
+  ],
 
   giveaways: [
     {
@@ -113,7 +177,7 @@ window.YAWL_DATA = {
     {
       id: 'h2',
       eventType: 'Special Event',
-      title: 'Sunday Wishlist Drop',
+      title: 'Sunday Wish List Drop',
       eventDate: '2026-05-11',
       startTime: '20:00',
       timezone: 'ET',
@@ -122,7 +186,7 @@ window.YAWL_DATA = {
       no: 0,
       host: 'Lark Wisp',
       locationText: 'Weekly thread and board update',
-      details: 'Post your wishlist updates before Monday gifting starts so the gallery stays current for everyone.',
+      details: 'Post your wish list updates before Monday gifting starts so the gallery stays current for everyone.',
     },
     {
       id: 'h3',

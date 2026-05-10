@@ -4,6 +4,7 @@ const {
   giveaways,
   hangouts: mockHangouts,
   members: mockMembers,
+  wishlists: mockWishlists,
   sections: baseSections,
 } = window.YAWL_DATA;
 const {
@@ -89,11 +90,24 @@ const ADMIN_EVENT_FIELD_MAP = {
   no_count: 'noCount',
   details: 'details',
 };
+const ADMIN_WISHLIST_FIELD_MAP = {
+  member_id: 'memberId',
+  summary: 'summary',
+  status_note: 'statusNote',
+  thank_you_note: 'thankYouNote',
+};
+const ADMIN_MEMBER_LINK_FIELD_MAP = {
+  linked_email: 'email',
+  linked_member_id: 'memberId',
+};
 const ADMIN_PASSWORD_RESET_FIELD_MAP = {
   new_password: 'newPassword',
   confirm_password: 'confirmPassword',
 };
 const DEFAULT_EVENT_TIMEZONE = cleanText(window.YAWL_CONFIG.defaultEventTimezone || 'ET') || 'ET';
+const WISHLIST_ITEM_SLOT_COUNT = 20;
+const WISHLIST_OUT_OF_STORE_LIMIT = 10;
+const WISHLIST_TIMEZONE = 'America/New_York';
 
 const defaultPrivateState = {
   notes: '',
@@ -101,15 +115,22 @@ const defaultPrivateState = {
   visited: {},
 };
 
+const initialMembers = normalizeMockMembers(mockMembers);
+const initialEvents = normalizeMockEvents(mockHangouts);
+const initialWishlists = normalizeMockWishlists(mockWishlists, initialMembers);
+
 const state = {
   activeSection: 'dashboard',
   privateData: loadPrivateState(),
-  members: normalizeMockMembers(mockMembers),
+  members: initialMembers,
   memberSource: hasSupabaseConfig ? 'loading' : 'mock',
   memberSourceMessage: hasSupabaseConfig ? 'Supabase config detected. Loading live member directory...' : getSupabaseStatus(),
-  events: normalizeMockEvents(mockHangouts),
+  events: initialEvents,
   eventSource: hasSupabaseConfig ? 'loading' : 'mock',
   eventSourceMessage: hasSupabaseConfig ? 'Supabase config detected. Loading shared events...' : getSupabaseStatus(),
+  wishlists: initialWishlists,
+  wishlistSource: hasSupabaseConfig ? 'loading' : 'mock',
+  wishlistSourceMessage: hasSupabaseConfig ? 'Supabase config detected. Loading weekly wish lists...' : getSupabaseStatus(),
   admin: createDefaultAdminState(),
 };
 
@@ -118,6 +139,7 @@ const app = document.querySelector('#app');
 render();
 void loadLiveMembers();
 void loadLiveEvents();
+void loadLiveWishlists();
 void initializeAdminSession();
 
 app.addEventListener('click', async (event) => {
@@ -157,6 +179,7 @@ app.addEventListener('click', async (event) => {
     case 'admin-edit-member':
       beginEditingMember(memberId);
       render();
+      scheduleScrollTo('[data-admin-member-form]');
       return;
     case 'admin-reset-member-form':
       resetAdminEditor();
@@ -165,9 +188,14 @@ app.addEventListener('click', async (event) => {
     case 'admin-edit-event':
       beginEditingEvent(eventId);
       render();
+      scheduleScrollTo('[data-admin-event-form]');
       return;
     case 'admin-reset-event-form':
       resetAdminEventEditor();
+      render();
+      return;
+    case 'wishlist-reset-form':
+      resetWishlistEditor();
       render();
       return;
     case 'admin-refresh-session':
@@ -221,6 +249,18 @@ app.addEventListener('submit', async (event) => {
   if (event.target.matches('[data-admin-event-form]')) {
     event.preventDefault();
     await handleAdminEventSubmit(event);
+    return;
+  }
+
+  if (event.target.matches('[data-wishlist-form]')) {
+    event.preventDefault();
+    await handleWishlistSubmit(event);
+    return;
+  }
+
+  if (event.target.matches('[data-admin-member-link-form]')) {
+    event.preventDefault();
+    await handleAdminMemberLinkSubmit(event);
     return;
   }
 
@@ -279,9 +319,9 @@ function render() {
 
 function renderHeader() {
   return `
-    <header class="hero">
-      <div>
-        <p class="eyebrow">Admin-managed v1</p>
+    summary: cleanText(values.summary) || 'Weekly wish list for the current Sunday reset.',
+    statusNote: cleanText(values.statusNote) || 'Wish list posted for this week.',
+    updateNote: cleanText(values.statusNote) || 'Wish list posted for this week.',
         <h2>${getSectionTitle()}</h2>
       </div>
       <div class="hero__actions">
@@ -385,6 +425,40 @@ function canManageEvents() {
   return Boolean(state.admin.staffProfile?.isActive && state.admin.staffProfile.canManageEvents);
 }
 
+function canCreateEvents() {
+  return Boolean(canManageEvents() || getLinkedEventMember());
+}
+
+function canEditEvent(calendarEvent) {
+  if (!calendarEvent) {
+    return false;
+  }
+
+  if (canManageEvents()) {
+    return true;
+  }
+
+  const linkedMember = getLinkedEventMember();
+  const sessionEmail = cleanText(state.admin.session?.user?.email).toLowerCase();
+
+  if (!linkedMember || !sessionEmail) {
+    return false;
+  }
+
+  return (
+    cleanText(calendarEvent.hostMemberId) === cleanText(linkedMember.id)
+    && cleanText(calendarEvent.createdByEmail).toLowerCase() === sessionEmail
+  );
+}
+
+function canManageWishlists() {
+  return canManageMembers();
+}
+
+function hasLinkedWishlistAccess() {
+  return Boolean(getLinkedWishlistMember());
+}
+
 function hasAdminToolsAccess() {
   return canManageMembers() || canManageEvents();
 }
@@ -393,6 +467,8 @@ function renderSection() {
   switch (state.activeSection) {
     case 'account':
       return renderAccount();
+    case 'wishlists':
+      return renderWishlists();
     case 'members':
       return renderMembers();
     case 'birthdays':
@@ -414,6 +490,9 @@ function renderSection() {
 function renderDashboard() {
   const upcomingMembers = getUpcomingBirthdayMembers(3);
   const dashboardCalendar = buildDashboardCalendarModel(getEvents());
+  const featuredWishlists = getActiveWishlists(3);
+  const totalWishlists = getActiveWishlists().length;
+  const dashboardStats = getDashboardStats(upcomingMembers);
 
   return `
     <section class="panel-grid panel-grid--dashboard">
@@ -437,7 +516,7 @@ function renderDashboard() {
       ${renderDashboardCalendarPanel(dashboardCalendar)}
 
       <article class="stats-grid stats-grid--dashboard dashboard-card dashboard-card--stats">
-        ${dashboard.stats
+        ${dashboardStats
           .map(
             (stat) => `
               <div class="stat-card">
@@ -452,21 +531,24 @@ function renderDashboard() {
       <article class="panel dashboard-card dashboard-card--wishlist">
         <div class="panel__heading">
           <div>
-            <p class="eyebrow">Wishlist Gallery</p>
-            <h3>Current highlights</h3>
+            <p class="eyebrow">Wish List Board</p>
+            <h3>Active this week</h3>
           </div>
+          <span class="tag">${escapeHtml(`${totalWishlists} active`)}</span>
         </div>
-        <div class="wish-grid">
-          ${dashboard.wishlistHighlights
-            .map(
-              (item) => `
+        <p class="panel-lead">Weekly wish lists reset every Sunday ET. Each board supports up to 20 items, with at most 10 marked out of store, plus a quick home link pulled from the member record.</p>
+        <div class="wish-grid wish-grid--dashboard">
+          ${featuredWishlists.length
+            ? featuredWishlists.map((wishlist) => renderWishlistPreviewCard(wishlist)).join('')
+            : `
                 <div class="wish-card">
-                  <p class="wish-card__name">${item.member}</p>
-                  <p>${item.detail}</p>
+                  <p class="wish-card__name">No active wish lists yet</p>
+                  <p>Post the first weekly wish list to start the board.</p>
                 </div>
-              `,
-            )
-            .join('')}
+              `}
+        </div>
+        <div class="button-row">
+          <button class="hero-button hero-button--secondary" type="button" data-section="wishlists">Open Wish List Board</button>
         </div>
       </article>
 
@@ -503,6 +585,335 @@ function renderDashboard() {
       </article>
     </section>
   `;
+}
+
+function renderWishlists() {
+  ensureWishlistEditorState();
+
+  const wishlists = getActiveWishlists();
+  const editorState = getWishlistEditorState();
+
+  return `
+    <section class="panel-grid panel-grid--directory-page">
+      ${renderWishlistSourceNotice()}
+      <article class="panel panel--announcement panel--span-full">
+        <div class="panel__heading">
+          <div>
+            <p class="eyebrow">Wish List Board</p>
+            <h3>Active wish lists of the week</h3>
+          </div>
+          <span class="tag">${escapeHtml(`${wishlists.length} active`)}</span>
+        </div>
+        <p class="panel-lead">Use this board like a clean weekly wish list thread. Each post can carry up to ${WISHLIST_ITEM_SLOT_COUNT} items, with no more than ${WISHLIST_OUT_OF_STORE_LIMIT} out-of-store requests, and the home link is pulled automatically from the linked member record.</p>
+      </article>
+
+      ${renderWishlistComposer(editorState)}
+
+      <article class="panel panel--directory panel--span-full">
+        <div class="panel__heading">
+          <div>
+            <p class="eyebrow">This Week</p>
+            <h3>Who has an active wish list</h3>
+          </div>
+          <span class="tag">${escapeHtml(`${wishlists.length} boards live`)}</span>
+        </div>
+        <div class="wishlist-board">
+          ${wishlists.length
+            ? wishlists.map((wishlist) => renderWishlistCard(wishlist)).join('')
+            : `
+                <div class="list-row list-row--compact">
+                  <span>No wish lists are active this week yet.</span>
+                </div>
+              `}
+        </div>
+      </article>
+    </section>
+  `;
+}
+
+function renderWishlistPreviewCard(wishlist) {
+  const previewItems = wishlist.items.filter((item) => item.imageUrl).slice(0, 4);
+
+  return `
+    <article class="wish-card wish-card--preview">
+      <div class="wish-card__media">
+        ${previewItems.length ? renderWishlistPreviewMedia(previewItems, wishlist.memberName) : renderWishlistFallbackMedia(wishlist, 'wish-card__image')}
+      </div>
+      <div class="wish-card__heading">
+        <p class="wish-card__name">${escapeHtml(wishlist.memberName)}</p>
+        <span class="tag">${escapeHtml(`${wishlist.totalItems} items`)}</span>
+      </div>
+      <p>${escapeHtml(wishlist.statusNote || wishlist.summary)}</p>
+      <div class="wishlist-counts">
+        ${renderWishlistCountTag(`${wishlist.outOfStoreCount} out of store`, wishlist.outOfStoreCount > 0 ? 'wishlist-count--warning' : '')}
+        ${renderWishlistCountTag(`${wishlist.receivedCount} received`, wishlist.receivedCount > 0 ? 'wishlist-count--success' : '')}
+      </div>
+    </article>
+  `;
+}
+
+function renderWishlistCard(wishlist) {
+  const thanksPeople = [...new Set([...(wishlist.thankYouTo || []), ...wishlist.items.map((item) => item.receivedFrom).filter(Boolean)])];
+
+  return `
+    <article class="wishlist-card">
+      <div class="wishlist-card__media wishlist-card__media--grid">
+        ${wishlist.items.length ? renderWishlistItemsGrid(wishlist.items, wishlist.memberName) : renderWishlistFallbackMedia(wishlist, 'wishlist-card__image')}
+      </div>
+      <div class="wishlist-card__body">
+        <div class="panel__heading">
+          <div>
+            <p class="eyebrow">${escapeHtml(wishlist.weekLabel)}</p>
+            <h3>${escapeHtml(wishlist.memberName)}</h3>
+          </div>
+          <span class="tag">${escapeHtml(wishlist.lastUpdatedLabel)}</span>
+        </div>
+        <p class="panel-lead">${escapeHtml(wishlist.summary)}</p>
+        <div class="wishlist-counts wishlist-counts--board">
+          ${renderWishlistCountTag(`${wishlist.totalItems}/${WISHLIST_ITEM_SLOT_COUNT} items`, '')}
+          ${renderWishlistCountTag(`${wishlist.outOfStoreCount}/${WISHLIST_OUT_OF_STORE_LIMIT} out of store`, wishlist.outOfStoreCount > 0 ? 'wishlist-count--warning' : '')}
+          ${renderWishlistCountTag(`${wishlist.receivedCount} received`, wishlist.receivedCount > 0 ? 'wishlist-count--success' : '')}
+        </div>
+        <div class="stack-list">
+          <div class="list-row list-row--compact">
+            <strong>Status</strong>
+            <span>${escapeHtml(wishlist.statusNote)}</span>
+          </div>
+          <div class="list-row list-row--compact">
+            <strong>Thanks</strong>
+            <span>${escapeHtml(wishlist.thankYouSummary)}</span>
+          </div>
+        </div>
+        ${wishlist.thankYouNote ? `<p class="wishlist-note"><strong>Thank-you note:</strong> ${escapeHtml(wishlist.thankYouNote)}</p>` : ''}
+        ${thanksPeople.length
+          ? `<div class="wishlist-thanks">${thanksPeople.map((name) => `<span class="tag tag--role-helper">${escapeHtml(name)}</span>`).join('')}</div>`
+          : ''}
+        <div class="button-row">
+          ${wishlist.homeLink ? `<a class="hero-button hero-button--secondary" href="${wishlist.homeLink}" target="_blank" rel="noreferrer">Open Home Link</a>` : ''}
+          ${wishlist.imageUrl ? `<a class="hero-button hero-button--secondary" href="${wishlist.imageUrl}" target="_blank" rel="noreferrer">Open Board Image</a>` : ''}
+        </div>
+      </div>
+    </article>
+  `;
+}
+
+function renderWishlistComposer(editorState) {
+  if (!state.admin.session) {
+    return `
+      <article class="panel panel--announcement panel--span-full">
+        <div class="panel__heading">
+          <div>
+            <p class="eyebrow">Post Your Wish List</p>
+            <h3>Sign in to manage this week's board</h3>
+          </div>
+        </div>
+        <p class="panel-lead">Wish list posting uses your YAWL Hub account. Staff can post for any member, and linked member accounts can manage only their own current-week wish list.</p>
+        <div class="button-row">
+          <button class="hero-button" type="button" data-section="account">Open Account</button>
+        </div>
+      </article>
+    `;
+  }
+
+  if (!editorState.canEdit) {
+    return `
+      <article class="panel panel--announcement panel--span-full">
+        <div class="panel__heading">
+          <div>
+            <p class="eyebrow">Post Your Wish List</p>
+            <h3>This login is not linked to a member yet</h3>
+          </div>
+        </div>
+        <p class="panel-lead">An admin needs to link this email to a member record before the app can auto-pull your home link and save your weekly wish list safely.</p>
+        <div class="button-row">
+          <button class="hero-button hero-button--secondary" type="button" data-section="account">Open Account</button>
+        </div>
+      </article>
+    `;
+  }
+
+  const form = state.admin.wishlistForm;
+  const selectedMember = editorState.selectedMember;
+  const itemSummary = summarizeWishlistItems(form.items);
+  const isEditingLiveBoard = Boolean(editorState.currentWishlist?.id);
+
+  return `
+    <article class="panel panel--span-full">
+      <div class="panel__heading">
+        <div>
+          <p class="eyebrow">Post Your Wish List</p>
+          <h3>${escapeHtml(isEditingLiveBoard ? 'Update this week\'s wish list' : 'Create this week\'s wish list')}</h3>
+        </div>
+        <span class="tag">${escapeHtml(formatWishlistWeekLabel(getCurrentWishlistWeekStartIso()))}</span>
+      </div>
+      <p class="panel-lead">Use item image links the same way you would build a YoWorld.info-style board. Each weekly wish list can carry up to ${WISHLIST_ITEM_SLOT_COUNT} items, with at most ${WISHLIST_OUT_OF_STORE_LIMIT} marked out of store.</p>
+      <form class="admin-form" data-wishlist-form>
+        <div class="form-grid">
+          ${canManageWishlists()
+            ? `
+                <label class="field-group">
+                  <span>Member</span>
+                  <select class="text-input" name="member_id">
+                    ${renderWishlistMemberOptions(editorState.availableMembers, form.memberId)}
+                  </select>
+                </label>
+              `
+            : `<input type="hidden" name="member_id" value="${escapeHtml(form.memberId)}" />`}
+          <label class="field-group field-group--wide">
+            <span>Wish List Summary</span>
+            <textarea name="summary" class="admin-textarea" placeholder="What vibe or item focus does this week's wish list have?">${escapeHtml(form.summary)}</textarea>
+          </label>
+          <label class="field-group field-group--wide">
+            <span>Status Note</span>
+            <textarea name="status_note" class="admin-textarea" placeholder="Example: Updated after evening gifts and porch visits.">${escapeHtml(form.statusNote)}</textarea>
+          </label>
+          <label class="field-group field-group--wide">
+            <span>Thank-you Note</span>
+            <textarea name="thank_you_note" class="admin-textarea" placeholder="Optional public thank-you note for gifters.">${escapeHtml(form.thankYouNote)}</textarea>
+          </label>
+        </div>
+        <div class="wishlist-editor-toolbar">
+          <div class="wishlist-counts wishlist-counts--board">
+            ${renderWishlistCountTag(`${itemSummary.total}/${WISHLIST_ITEM_SLOT_COUNT} items`, '')}
+            ${renderWishlistCountTag(`${itemSummary.outOfStore}/${WISHLIST_OUT_OF_STORE_LIMIT} out of store`, itemSummary.outOfStore > 0 ? 'wishlist-count--warning' : '')}
+            ${renderWishlistCountTag(`${itemSummary.received} received`, itemSummary.received > 0 ? 'wishlist-count--success' : '')}
+          </div>
+          ${selectedMember?.homeLink ? `<a class="hero-button hero-button--secondary" href="${selectedMember.homeLink}" target="_blank" rel="noreferrer">Open ${escapeHtml(selectedMember.displayName)}'s Home</a>` : ''}
+        </div>
+        <div class="wishlist-editor-grid">
+          ${form.items.map((item, index) => renderWishlistItemFieldset(item, index)).join('')}
+        </div>
+        <div class="button-row admin-form-actions">
+          <button class="hero-button" type="submit">${escapeHtml(isEditingLiveBoard ? 'Save This Week\'s Wish List' : 'Post This Week\'s Wish List')}</button>
+          <button class="hero-button hero-button--secondary" type="button" data-action="wishlist-reset-form">Reset Form</button>
+        </div>
+      </form>
+      <p class="muted">Home links come from the member directory automatically. If a member's house key changes, update it in Members and the next wish list save will use the new link.</p>
+    </article>
+  `;
+}
+
+function renderWishlistItemFieldset(item, index) {
+  return `
+    <section class="wishlist-slot">
+      <div class="wishlist-slot__heading">
+        <strong>Item ${index + 1}</strong>
+        <span class="tag ${item.availabilityStatus === 'out_of_store' ? 'tag--role-event' : 'tag--muted'}">${escapeHtml(formatWishlistAvailabilityLabel(item.availabilityStatus))}</span>
+      </div>
+      <div class="wishlist-slot__grid">
+        <label class="field-group field-group--wide">
+          <span>Item Name</span>
+          <input class="text-input" type="text" name="item_name_${index}" value="${escapeHtml(item.name)}" placeholder="Victorian wall shelf" />
+        </label>
+        <label class="field-group field-group--wide">
+          <span>Item Image URL</span>
+          <input class="text-input" type="url" name="item_image_url_${index}" value="${escapeHtml(item.imageUrl)}" placeholder="Paste the item image URL" />
+        </label>
+        <label class="field-group field-group--wide">
+          <span>Item Source Link</span>
+          <input class="text-input" type="url" name="item_source_url_${index}" value="${escapeHtml(item.sourceUrl)}" placeholder="Optional YoWorld.info item link" />
+        </label>
+        <label class="field-group">
+          <span>Availability</span>
+          <select class="text-input" name="availability_status_${index}">
+            ${renderWishlistAvailabilityOptions(item.availabilityStatus)}
+          </select>
+        </label>
+        <label class="field-group">
+          <span>Received From</span>
+          <input class="text-input" type="text" name="received_from_${index}" value="${escapeHtml(item.receivedFrom)}" placeholder="Optional gifter name" />
+        </label>
+        <label class="field-group field-group--checkbox">
+          <span>Gifted</span>
+          <input type="checkbox" name="is_received_${index}" ${item.isReceived ? 'checked' : ''} />
+        </label>
+      </div>
+    </section>
+  `;
+}
+
+function renderWishlistPreviewMedia(items, memberName) {
+  return `
+    <div class="wish-thumb-grid" aria-label="${escapeHtml(`${memberName} wish list item preview`)}">
+      ${items
+        .map(
+          (item) => `
+            <div class="wish-thumb-grid__item">
+              <img class="wish-thumb-grid__image" src="${item.imageUrl}" alt="${escapeHtml(item.name || `${memberName} wish list item`)}" loading="lazy" />
+            </div>
+          `,
+        )
+        .join('')}
+    </div>
+  `;
+}
+
+function renderWishlistFallbackMedia(wishlist, imageClassName) {
+  if (wishlist.imageUrl) {
+    return `<img class="${imageClassName}" src="${wishlist.imageUrl}" alt="${escapeHtml(`${wishlist.memberName} weekly wish list`)}" loading="lazy" />`;
+  }
+
+  return `
+    <div class="wishlist-card__placeholder">
+      <strong>${escapeHtml(wishlist.memberName)}</strong>
+      <span>${escapeHtml(wishlist.totalItems ? `${wishlist.totalItems} wish list items` : 'No item images yet')}</span>
+    </div>
+  `;
+}
+
+function renderWishlistItemsGrid(items, memberName) {
+  return `
+    <div class="wishlist-items-grid" aria-label="${escapeHtml(`${memberName} wish list items`)}">
+      ${items.map((item) => renderWishlistItemCard(item)).join('')}
+    </div>
+  `;
+}
+
+function renderWishlistItemCard(item) {
+  const cardBody = `
+    <div class="wishlist-item__media">
+      ${item.imageUrl
+        ? `<img class="wishlist-item__image" src="${item.imageUrl}" alt="${escapeHtml(item.name || 'Wish list item')}" loading="lazy" />`
+        : '<div class="wishlist-item__placeholder">Image pending</div>'}
+    </div>
+    <div class="wishlist-item__body">
+      <strong class="wishlist-item__name">${escapeHtml(item.name || 'Wish list item')}</strong>
+      <div class="wishlist-item__tags">
+        <span class="tag ${item.availabilityStatus === 'out_of_store' ? 'tag--role-event' : 'tag--muted'}">${escapeHtml(formatWishlistAvailabilityLabel(item.availabilityStatus))}</span>
+        ${item.isReceived ? `<span class="tag tag--role-helper">${escapeHtml(item.receivedFrom ? `Gifted by ${item.receivedFrom}` : 'Gifted')}</span>` : ''}
+      </div>
+    </div>
+  `;
+
+  if (item.sourceUrl) {
+    return `<a class="wishlist-item ${item.isReceived ? 'wishlist-item--received' : ''}" href="${item.sourceUrl}" target="_blank" rel="noreferrer">${cardBody}</a>`;
+  }
+
+  return `<div class="wishlist-item ${item.isReceived ? 'wishlist-item--received' : ''}">${cardBody}</div>`;
+}
+
+function renderWishlistCountTag(label, className) {
+  return `<span class="tag wishlist-count ${className}">${escapeHtml(label)}</span>`;
+}
+
+function renderWishlistMemberOptions(members, selectedMemberId) {
+  return members
+    .map(
+      (member) => `
+        <option value="${escapeHtml(member.id)}" ${member.id === selectedMemberId ? 'selected' : ''}>${escapeHtml(member.displayName)}</option>
+      `,
+    )
+    .join('');
+}
+
+function renderWishlistAvailabilityOptions(selectedValue) {
+  return ['in_store', 'out_of_store']
+    .map(
+      (value) => `
+        <option value="${value}" ${normalizeWishlistAvailability(value) === normalizeWishlistAvailability(selectedValue) ? 'selected' : ''}>${escapeHtml(formatWishlistAvailabilityLabel(value))}</option>
+      `,
+    )
+    .join('');
 }
 
 function renderDashboardCalendarPanel(calendarModel) {
@@ -628,6 +1039,17 @@ function renderLaunchpadPanel() {
       </div>
     </article>
   `;
+}
+
+function getDashboardStats(upcomingMembers) {
+  const openGiveaways = giveaways.filter((item) => !cleanText(item.claimedBy)).length;
+
+  return [
+    { label: 'Wish Lists active', value: String(getActiveWishlists().length) },
+    { label: 'Birthdays soon', value: String(upcomingMembers.length) },
+    { label: 'Open giveaways', value: String(openGiveaways) },
+    { label: 'Upcoming events', value: String(getEvents().length) },
+  ];
 }
 
 function renderLinkLaunchTile(eyebrow, title, text, href, footer, modifier) {
@@ -797,10 +1219,12 @@ function renderGiveaways() {
 
 function renderHangouts() {
   const currentEvents = getEvents();
+  const currentMembers = getMembers();
 
   return `
     <section class="panel-grid panel-grid--members">
       ${renderEventSourceNotice()}
+      ${renderEventComposerPanel(currentMembers)}
       ${currentEvents.length
         ? currentEvents.map((calendarEvent) => renderEventCard(calendarEvent)).join('')
         : renderEmptyEventPanel(
@@ -813,8 +1237,47 @@ function renderHangouts() {
   `;
 }
 
+function renderEventComposerPanel(currentMembers) {
+  if (canCreateEvents()) {
+    return renderAdminEventEditorPanel(currentMembers, { context: 'events' });
+  }
+
+  if (!state.admin.session) {
+    return `
+      <article class="panel panel--announcement panel--span-full">
+        <div class="panel__heading">
+          <div>
+            <p class="eyebrow">Post an Event</p>
+            <h3>Sign in to post on the shared calendar</h3>
+          </div>
+        </div>
+        <p class="panel-lead">Members can post their own events once their login is connected to a member profile. They can then edit or deactivate only the events they created.</p>
+        <div class="button-row">
+          <button class="hero-button" type="button" data-section="account">Open Account</button>
+        </div>
+      </article>
+    `;
+  }
+
+  return `
+    <article class="panel panel--announcement panel--span-full">
+      <div class="panel__heading">
+        <div>
+          <p class="eyebrow">Post an Event</p>
+          <h3>Link this login to a member first</h3>
+        </div>
+      </div>
+      <p class="panel-lead">An admin needs to connect this account to a member profile before it can post a personal event on the shared calendar.</p>
+      <div class="button-row">
+        <button class="hero-button" type="button" data-section="account">Open Account</button>
+      </div>
+    </article>
+  `;
+}
+
 function renderEventCard(calendarEvent, options = {}) {
   const { showAdminActions = false } = options;
+  const showEventActions = showAdminActions || canEditEvent(calendarEvent);
 
   return `
     <article class="panel event-card">
@@ -853,7 +1316,7 @@ function renderEventCard(calendarEvent, options = {}) {
           <strong>${calendarEvent.noCount}</strong>
         </div>
       </div>
-      ${showAdminActions
+      ${showEventActions
         ? `
             <div class="button-row admin-form-actions">
               <button class="hero-button hero-button--secondary" type="button" data-action="admin-edit-event" data-event-id="${escapeHtml(calendarEvent.id)}">Edit Event</button>
@@ -1045,6 +1508,7 @@ function renderAdmin() {
     <section class="panel-grid panel-grid--admin">
       ${renderAdminSessionPanel()}
       ${canManageMembers() ? renderAdminEditorPanel() : ''}
+      ${canManageMembers() ? renderAdminMemberLinkPanel(currentMembers) : ''}
       ${canManageEvents() ? renderAdminEventEditorPanel(currentMembers) : ''}
       ${canManageMembers() ? renderAdminMembersPanel(currentMembers) : ''}
       ${canManageEvents() ? renderAdminEventsPanel() : ''}
@@ -1118,6 +1582,7 @@ function renderAdminSessionPanel() {
   const staffProfile = state.admin.staffProfile;
   const sessionEmail = cleanText(state.admin.session?.user?.email || '');
   const isStaff = hasStaffProfile();
+  const linkedMember = getLinkedWishlistMember();
 
   return `
     <article class="panel panel--announcement">
@@ -1127,6 +1592,7 @@ function renderAdminSessionPanel() {
       ${renderAdminNotice()}
       <div class="permission-badges">
         ${isStaff ? renderPermissionBadges(staffProfile) : '<span class="tag tag--muted">Member account</span>'}
+        ${linkedMember ? `<span class="tag tag--role-helper">Wish list linked: ${escapeHtml(linkedMember.displayName)}</span>` : ''}
       </div>
       <div class="button-row admin-form-actions">
         ${hasAdminToolsAccess() ? '<button class="hero-button" type="button" data-section="admin">Open Admin Tools</button>' : ''}
@@ -1213,6 +1679,7 @@ function renderPermissionBadges(staffProfile) {
 function renderAdminEditorPanel() {
   const form = state.admin.form;
   const isEditing = Boolean(state.admin.editingMemberId);
+  const editingMember = isEditing ? findMemberById(state.admin.editingMemberId) : null;
   const canManageRoles = Boolean(state.admin.staffProfile?.canManageRoles);
 
   return `
@@ -1220,9 +1687,9 @@ function renderAdminEditorPanel() {
       <div class="panel__heading">
         <div>
           <p class="eyebrow">Member and Birthday Editor</p>
-          <h3>${isEditing ? 'Edit member' : 'Add member'}</h3>
+          <h3>${escapeHtml(isEditing ? `Edit ${editingMember?.displayName || 'member'}` : 'Add member')}</h3>
         </div>
-        <span class="tag">${escapeHtml(isEditing ? 'Editing active member' : 'New active member')}</span>
+        <span class="tag">${escapeHtml(isEditing ? 'Editing selected member' : 'New active member')}</span>
       </div>
       <p class="panel-lead">Use Facebook names as the primary label. Set the YoWorld name as the gift-confirmation name and add birthdays here for the shared birthday board.</p>
       <form class="admin-form" data-admin-member-form>
@@ -1266,20 +1733,34 @@ function renderAdminEditorPanel() {
   `;
 }
 
-function renderAdminEventEditorPanel(currentMembers) {
-  const form = state.admin.eventForm;
+function renderAdminEventEditorPanel(currentMembers, options = {}) {
+  const { context = 'admin' } = options;
+  const form = getEventEditorFormState();
   const isEditing = Boolean(state.admin.editingEventId);
+  const isEventsContext = context === 'events';
+  const canChooseHost = canManageEvents();
+  const linkedMember = getLinkedEventMember();
+  const panelEyebrow = isEventsContext ? 'Post an Event' : 'Event Calendar Editor';
+  const panelTitle = isEventsContext
+    ? (isEditing ? 'Update your event' : 'Post a new event')
+    : (isEditing ? 'Edit event' : 'Add event');
+  const panelTag = isEventsContext
+    ? (isEditing ? 'Editing your event' : 'Shared calendar')
+    : (isEditing ? 'Editing live event' : 'Shared calendar');
+  const panelLead = canChooseHost
+    ? 'Add birthday parties, meet ups, games, special events, or a custom event type here. The event type controls the icon shown next to the event title.'
+    : `Your linked member account can post as ${linkedMember?.displayName || 'your member profile'} and can edit or deactivate only the events it created.`;
 
   return `
-    <article class="panel">
+    <article class="panel ${isEventsContext ? 'panel--span-full' : ''}">
       <div class="panel__heading">
         <div>
-          <p class="eyebrow">Event Calendar Editor</p>
-          <h3>${isEditing ? 'Edit event' : 'Add event'}</h3>
+          <p class="eyebrow">${escapeHtml(panelEyebrow)}</p>
+          <h3>${escapeHtml(panelTitle)}</h3>
         </div>
-        <span class="tag">${escapeHtml(isEditing ? 'Editing live event' : 'Shared calendar')}</span>
+        <span class="tag">${escapeHtml(panelTag)}</span>
       </div>
-      <p class="panel-lead">Add birthday parties, meet ups, games, special events, or a custom event type here. The event type controls the icon shown next to the event title.</p>
+      <p class="panel-lead">${escapeHtml(panelLead)}</p>
       <form class="admin-form" data-admin-event-form>
         <div class="form-grid">
           <label class="field-group">
@@ -1317,7 +1798,8 @@ function renderAdminEventEditorPanel(currentMembers) {
           </label>
           <label class="field-group">
             <span>Host</span>
-            <input class="text-input" type="text" name="host_name" value="${escapeHtml(form.hostName)}" list="event-host-options" placeholder="Nova June" />
+            <input class="text-input" type="text" name="host_name" value="${escapeHtml(form.hostName)}" ${canChooseHost ? 'list="event-host-options" placeholder="Nova June"' : 'readonly'} />
+            <small class="field-help">${escapeHtml(canChooseHost ? 'Use a member name from the directory when possible.' : 'Linked member event posts keep the host locked to your member profile.')}</small>
           </label>
           <label class="field-group">
             <span>Location</span>
@@ -1340,17 +1822,21 @@ function renderAdminEventEditorPanel(currentMembers) {
             <textarea name="details" class="admin-textarea" placeholder="Describe the theme, timing, dress code, gifts, or party details.">${escapeHtml(form.details)}</textarea>
           </label>
         </div>
-        <datalist id="event-host-options">
-          ${currentMembers
-            .map((member) => `<option value="${escapeHtml(member.facebookName || member.displayName)}"></option>`)
-            .join('')}
-        </datalist>
+        ${canChooseHost
+          ? `
+              <datalist id="event-host-options">
+                ${currentMembers
+                  .map((member) => `<option value="${escapeHtml(member.facebookName || member.displayName)}"></option>`)
+                  .join('')}
+              </datalist>
+            `
+          : ''}
         <div class="button-row admin-form-actions">
           <button class="hero-button" type="submit">${escapeHtml(isEditing ? 'Save Event' : 'Add Event')}</button>
           <button class="hero-button hero-button--secondary" type="button" data-action="admin-reset-event-form">${escapeHtml(isEditing ? 'Cancel Edit' : 'Clear Form')}</button>
         </div>
       </form>
-      <p class="muted">Event planners and admins can manage the live shared calendar here. Old events should be deactivated instead of hard deleted.</p>
+      <p class="muted">${escapeHtml(canChooseHost ? 'Event planners and admins can manage the live shared calendar here. Old events should be deactivated instead of hard deleted.' : 'Member-posted events stay editable only by the member who created them and by staff with event access.')}</p>
     </article>
   `;
 }
@@ -1367,6 +1853,42 @@ function renderEventTypeOptions(selectedType) {
       `,
     )
     .join('');
+}
+
+function renderAdminMemberLinkPanel(currentMembers) {
+  const form = state.admin.memberLinkForm;
+
+  return `
+    <article class="panel">
+      <div class="panel__heading">
+        <div>
+          <p class="eyebrow">Member Login Link</p>
+          <h3>Connect a login to a member</h3>
+        </div>
+        <span class="tag">Wish list access</span>
+      </div>
+      <p class="panel-lead">Link a member's sign-in email to their member row so the Wish Lists tab can auto-fill the right home link and limit that account to its own current-week board.</p>
+      <form class="admin-form" data-admin-member-link-form>
+        <div class="form-grid">
+          <label class="field-group">
+            <span>Member Email</span>
+            <input class="text-input" type="email" name="linked_email" value="${escapeHtml(form.email)}" placeholder="member@example.com" required />
+          </label>
+          <label class="field-group">
+            <span>Linked Member</span>
+            <select class="text-input" name="linked_member_id" required>
+              <option value="">Choose a member</option>
+              ${renderWishlistMemberOptions(currentMembers, form.memberId)}
+            </select>
+          </label>
+        </div>
+        <div class="button-row admin-form-actions">
+          <button class="hero-button" type="submit">Save Member Link</button>
+        </div>
+      </form>
+      <p class="muted">After this link is saved, that login can manage only its own weekly wish list unless it also has staff permissions.</p>
+    </article>
+  `;
 }
 
 function renderRoleOptions(selectedRole) {
@@ -1424,6 +1946,7 @@ function renderAdminMemberRow(member) {
       </div>
       <div class="directory-cell directory-cell--actions">
         <div class="directory-actions">
+          ${isSelected ? '<span class="tag tag--role-admin">Editing now</span>' : ''}
           <button class="hero-button hero-button--secondary" type="button" data-action="admin-edit-member" data-member-id="${escapeHtml(member.id)}">Edit</button>
           <button class="tracker-button" type="button" data-action="admin-deactivate-member" data-member-id="${escapeHtml(member.id)}">Deactivate</button>
         </div>
@@ -1492,6 +2015,100 @@ function renderAdminNotice() {
 
 function getMembers() {
   return state.members;
+}
+
+function getWishlists() {
+  return [...state.wishlists].sort(compareWishlists);
+}
+
+function getActiveWishlists(limit = 0) {
+  const activeWishlists = getWishlists().filter((wishlist) => wishlist.isActive && isWishlistCurrentWeek(wishlist.weekStartDate));
+  return limit > 0 ? activeWishlists.slice(0, limit) : activeWishlists;
+}
+
+function getCurrentWeekWishlistForMember(memberId) {
+  const normalizedMemberId = cleanText(memberId);
+
+  if (!normalizedMemberId) {
+    return null;
+  }
+
+  return getWishlists().find(
+    (wishlist) => cleanText(wishlist.memberId) === normalizedMemberId && isWishlistCurrentWeek(wishlist.weekStartDate),
+  ) || null;
+}
+
+function getWishlistEditorMembers() {
+  if (canManageWishlists()) {
+    return getMembers();
+  }
+
+  const linkedMember = getLinkedWishlistMember();
+  return linkedMember ? [linkedMember] : [];
+}
+
+function getLinkedWishlistMember() {
+  return findMemberById(state.admin.memberAccount?.memberId);
+}
+
+function getWishlistEditorState() {
+  const availableMembers = getWishlistEditorMembers();
+  const selectedMember = findMemberById(state.admin.wishlistForm.memberId) || availableMembers[0] || null;
+
+  return {
+    canEdit: canManageWishlists() || hasLinkedWishlistAccess(),
+    availableMembers,
+    selectedMember,
+    currentWishlist: selectedMember ? getCurrentWeekWishlistForMember(selectedMember.id) : null,
+  };
+}
+
+function ensureWishlistEditorState() {
+  const availableMembers = getWishlistEditorMembers();
+
+  if (!availableMembers.length) {
+    return;
+  }
+
+  const selectedMemberId = cleanText(state.admin.wishlistForm.memberId);
+
+  if (availableMembers.some((member) => member.id === selectedMemberId)) {
+    return;
+  }
+
+  loadWishlistFormForMember(availableMembers[0].id);
+}
+
+function loadWishlistFormForMember(memberId) {
+  const normalizedMemberId = cleanText(memberId);
+  const currentWishlist = getCurrentWeekWishlistForMember(normalizedMemberId);
+  state.admin.wishlistForm = createEmptyWishlistForm(currentWishlist, normalizedMemberId);
+}
+
+function renderWishlistSourceNotice() {
+  if (state.wishlistSource === 'live') {
+    return '';
+  }
+
+  let title = 'Using mock wish list data';
+  let message = state.wishlistSourceMessage || getSupabaseStatus();
+
+  if (state.wishlistSource === 'loading') {
+    title = 'Loading weekly wish lists';
+    message = 'The app found your Supabase config and is trying to load the live weekly wish list board now.';
+  } else if (state.wishlistSource === 'restricted') {
+    title = 'Wish list board is still private';
+  } else if (state.wishlistSource === 'error') {
+    title = 'Live wish list load failed';
+  }
+
+  return `
+    <article class="panel panel--announcement panel--span-full">
+      <p class="eyebrow">Wishlist Status</p>
+      <h3>${escapeHtml(title)}</h3>
+      <p class="panel-lead">${escapeHtml(message)}</p>
+    </article>
+  `;
 }
 
 function getEvents() {
@@ -1705,13 +2322,16 @@ function createDefaultAdminState() {
   return {
     session: storedSession,
     staffProfile: null,
+    memberAccount: null,
     isReady: false,
     isBusy: false,
     notice: '',
     noticeTone: 'muted',
     isRecoveryMode: false,
     authForm: createAdminAuthForm(storedSession),
+    memberLinkForm: createMemberLinkForm(storedSession),
     passwordResetForm: createPasswordResetForm(),
+    wishlistForm: createEmptyWishlistForm(),
     editingMemberId: '',
     form: createEmptyMemberForm(),
     editingEventId: '',
@@ -1749,6 +2369,38 @@ function createPasswordResetForm() {
   };
 }
 
+function createMemberLinkForm(session = null, link = null) {
+  return {
+    email: cleanText(link?.email || session?.user?.email).toLowerCase(),
+    memberId: cleanText(link?.memberId),
+  };
+}
+
+function createEmptyWishlistItem(item = null, index = 0) {
+  return {
+    id: cleanText(item?.id) || `wishlist-slot-${index + 1}`,
+    name: cleanText(item?.name || item?.itemName),
+    imageUrl: sanitizeUrl(cleanText(item?.imageUrl || item?.item_image_url)),
+    sourceUrl: sanitizeUrl(cleanText(item?.sourceUrl || item?.item_source_url)),
+    availabilityStatus: normalizeWishlistAvailability(item?.availabilityStatus || item?.availability_status),
+    isReceived: Boolean(item?.isReceived ?? item?.is_received),
+    receivedFrom: cleanText(item?.receivedFrom || item?.received_from),
+    sortOrder: parseNullableInt(item?.sortOrder || item?.sort_order) || index + 1,
+  };
+}
+
+function createEmptyWishlistForm(wishlist = null, memberId = '') {
+  const sourceItems = Array.isArray(wishlist?.items) ? wishlist.items : [];
+
+  return {
+    memberId: cleanText(memberId || wishlist?.memberId),
+    summary: cleanText(wishlist?.summary),
+    statusNote: cleanText(wishlist?.statusNote || wishlist?.updateNote),
+    thankYouNote: cleanText(wishlist?.thankYouNote),
+    items: Array.from({ length: WISHLIST_ITEM_SLOT_COUNT }, (_, index) => createEmptyWishlistItem(sourceItems[index], index)),
+  };
+}
+
 function createEmptyEventForm(calendarEvent = null) {
   const eventTypeDetails = getEventTypeDetails(calendarEvent?.eventType);
 
@@ -1777,11 +2429,13 @@ async function initializeAdminSession(showRefreshMessage = false) {
   const session = redirectSession.session || (await getValidSession());
   state.admin.session = session;
   state.admin.staffProfile = null;
+  state.admin.memberAccount = null;
   state.admin.isRecoveryMode = Boolean(redirectSession.session && redirectSession.type === 'recovery');
   state.admin.authForm = {
     ...state.admin.authForm,
     email: state.admin.authForm.email || cleanText(session?.user?.email),
   };
+  state.admin.memberLinkForm = createMemberLinkForm(session, state.admin.memberAccount);
 
   if (state.admin.isRecoveryMode) {
     state.admin.passwordResetForm = createPasswordResetForm();
@@ -1789,6 +2443,7 @@ async function initializeAdminSession(showRefreshMessage = false) {
 
   if (session) {
     await loadStaffProfile();
+    await loadCurrentMemberAccount();
 
     if (state.admin.isRecoveryMode) {
       state.activeSection = 'account';
@@ -1840,6 +2495,40 @@ async function loadStaffProfile() {
   }
 
   setAdminNotice(`Signed in as ${state.admin.staffProfile.displayName}.`, 'success');
+}
+
+async function loadCurrentMemberAccount() {
+  if (!hasSupabaseConfig || !state.admin.session?.user?.email) {
+    state.admin.memberAccount = null;
+    return;
+  }
+
+  const query = new URLSearchParams({
+    select: 'email,member_id',
+    email: `eq.${cleanText(state.admin.session.user.email).toLowerCase()}`,
+  }).toString();
+  const response = await supabaseFetch('member_accounts', {
+    query,
+    method: 'GET',
+    useSession: true,
+  });
+
+  if (!response.ok) {
+    state.admin.memberAccount = null;
+    state.admin.memberLinkForm = createMemberLinkForm(state.admin.session);
+    return;
+  }
+
+  const rows = await response.json();
+  const link = Array.isArray(rows) ? rows[0] : null;
+
+  state.admin.memberAccount = link
+    ? {
+        email: cleanText(link.email).toLowerCase(),
+        memberId: cleanText(link.member_id),
+      }
+    : null;
+  state.admin.memberLinkForm = createMemberLinkForm(state.admin.session, state.admin.memberAccount);
 }
 
 function normalizeStaffProfile(profile) {
@@ -2019,6 +2708,11 @@ function beginEditingEvent(eventId) {
     return;
   }
 
+  if (!canEditEvent(calendarEvent)) {
+    setAdminNotice('You can edit only events you created unless you have event manager access.', 'error');
+    return;
+  }
+
   state.admin.editingEventId = calendarEvent.id;
   state.admin.eventForm = createEmptyEventForm(calendarEvent);
   setAdminNotice(`Editing ${calendarEvent.title}.`, 'muted');
@@ -2028,6 +2722,14 @@ function resetAdminEventEditor() {
   state.admin.editingEventId = '';
   state.admin.eventForm = createEmptyEventForm();
   setAdminNotice('Event form reset.', 'muted');
+}
+
+function resetWishlistEditor() {
+  const fallbackMember = getWishlistEditorMembers()[0] || null;
+  const fallbackMemberId = cleanText(fallbackMember?.id);
+
+  state.admin.wishlistForm = createEmptyWishlistForm(getCurrentWeekWishlistForMember(fallbackMemberId), fallbackMemberId);
+  setAdminNotice('Wish list form reset.', 'muted');
 }
 
 function syncAdminDraftField(target) {
@@ -2050,6 +2752,16 @@ function syncAdminDraftField(target) {
     return;
   }
 
+  if (target.closest('[data-wishlist-form]')) {
+    syncWishlistDraftField(target);
+    return;
+  }
+
+  if (target.closest('[data-admin-member-link-form]')) {
+    syncAdminDraftState('memberLinkForm', ADMIN_MEMBER_LINK_FIELD_MAP, target);
+    return;
+  }
+
   if (target.closest('[data-admin-password-reset-form]')) {
     syncAdminDraftState('passwordResetForm', ADMIN_PASSWORD_RESET_FIELD_MAP, target);
   }
@@ -2066,6 +2778,67 @@ function syncAdminDraftState(stateKey, fieldMap, target) {
     ...state.admin[stateKey],
     [draftKey]: target.value,
   };
+}
+
+function syncWishlistDraftField(target) {
+  if (!(target instanceof Element) || !target.name) {
+    return;
+  }
+
+  if (target.name === 'member_id') {
+    loadWishlistFormForMember(target.value);
+    render();
+    return;
+  }
+
+  const itemMatch = target.name.match(/^(item_name|item_image_url|item_source_url|availability_status|received_from|is_received)_(\d+)$/);
+
+  if (itemMatch) {
+    const itemIndex = Number.parseInt(itemMatch[2], 10);
+
+    if (Number.isNaN(itemIndex) || itemIndex < 0 || itemIndex >= state.admin.wishlistForm.items.length) {
+      return;
+    }
+
+    const nextItems = [...state.admin.wishlistForm.items];
+    const currentItem = nextItems[itemIndex];
+    let nextValue = target.value;
+
+    if (target instanceof HTMLInputElement && target.type === 'checkbox') {
+      nextValue = target.checked;
+    }
+
+    switch (itemMatch[1]) {
+      case 'item_name':
+        nextItems[itemIndex] = { ...currentItem, name: String(nextValue) };
+        break;
+      case 'item_image_url':
+        nextItems[itemIndex] = { ...currentItem, imageUrl: String(nextValue) };
+        break;
+      case 'item_source_url':
+        nextItems[itemIndex] = { ...currentItem, sourceUrl: String(nextValue) };
+        break;
+      case 'availability_status':
+        nextItems[itemIndex] = { ...currentItem, availabilityStatus: String(nextValue) };
+        break;
+      case 'received_from':
+        nextItems[itemIndex] = { ...currentItem, receivedFrom: String(nextValue) };
+        break;
+      case 'is_received':
+        nextItems[itemIndex] = { ...currentItem, isReceived: Boolean(nextValue) };
+        break;
+      default:
+        return;
+    }
+
+    state.admin.wishlistForm = {
+      ...state.admin.wishlistForm,
+      items: nextItems,
+    };
+    return;
+  }
+
+  syncAdminDraftState('wishlistForm', ADMIN_WISHLIST_FIELD_MAP, target);
 }
 
 async function handleAdminMemberSubmit(event) {
@@ -2130,8 +2903,8 @@ async function handleAdminMemberSubmit(event) {
 }
 
 async function handleAdminEventSubmit(event) {
-  if (!canManageEvents()) {
-    setAdminNotice('This account does not have permission to manage events.', 'error');
+  if (!canCreateEvents()) {
+    setAdminNotice('This account does not have permission to post events.', 'error');
     render();
     return;
   }
@@ -2143,6 +2916,11 @@ async function handleAdminEventSubmit(event) {
   try {
     const payload = buildEventPayload(new FormData(event.target));
     const wasEditing = Boolean(state.admin.editingEventId);
+
+    if (!wasEditing && !canManageEvents()) {
+      payload.created_by_email = cleanText(state.admin.session?.user?.email).toLowerCase() || null;
+    }
+
     const response = state.admin.editingEventId
       ? await supabaseFetch('events', {
           method: 'PATCH',
@@ -2176,6 +2954,162 @@ async function handleAdminEventSubmit(event) {
     setAdminNotice(wasEditing ? `Saved ${savedTitle}.` : `${savedTitle} is now on the shared calendar.`, 'success');
   } catch (error) {
     setAdminNotice(error instanceof Error ? error.message : 'Could not save that event.', 'error');
+  } finally {
+    state.admin.isBusy = false;
+    render();
+  }
+}
+
+async function handleWishlistSubmit(event) {
+  if (!state.admin.session) {
+    setAdminNotice('Sign in first to post a weekly wish list.', 'error');
+    render();
+    return;
+  }
+
+  const editorState = getWishlistEditorState();
+
+  if (!editorState.canEdit) {
+    setAdminNotice('This account is not linked to a member record yet.', 'error');
+    render();
+    return;
+  }
+
+  const formData = new FormData(event.target);
+  const targetMemberId = canManageWishlists()
+    ? cleanText(formData.get('member_id'))
+    : cleanText(state.admin.memberAccount?.memberId);
+  const targetMember = findMemberById(targetMemberId);
+
+  if (!targetMember) {
+    setAdminNotice('Choose a valid member before saving the wish list.', 'error');
+    render();
+    return;
+  }
+
+  state.admin.isBusy = true;
+  setAdminNotice('Saving this week\'s wish list...', 'muted');
+  render();
+
+  try {
+    const payload = buildWishlistPostPayload(formData, targetMember);
+    const response = await supabaseFetch('wishlist_posts', {
+      method: 'POST',
+      query: new URLSearchParams({ on_conflict: 'member_id,week_start_date' }).toString(),
+      useSession: true,
+      headers: {
+        Prefer: 'resolution=merge-duplicates,return=representation',
+      },
+      body: payload,
+    });
+
+    if (!response.ok) {
+      throw new Error(await getSupabaseErrorMessage(response, 'wishlist-write'));
+    }
+
+    const rows = await response.json();
+    const savedRow = Array.isArray(rows) ? rows[0] : rows;
+    const wishlistId = cleanText(savedRow?.id);
+
+    if (!wishlistId) {
+      throw new Error('Supabase did not return the saved wish list id.');
+    }
+
+    const deleteResponse = await supabaseFetch('wishlist_items', {
+      method: 'DELETE',
+      query: new URLSearchParams({ wishlist_id: `eq.${wishlistId}` }).toString(),
+      useSession: true,
+    });
+
+    if (!deleteResponse.ok) {
+      throw new Error(await getSupabaseErrorMessage(deleteResponse, 'wishlist-write'));
+    }
+
+    const itemPayload = buildWishlistItemPayloads(formData, wishlistId);
+
+    if (itemPayload.length) {
+      const itemResponse = await supabaseFetch('wishlist_items', {
+        method: 'POST',
+        useSession: true,
+        headers: {
+          Prefer: 'return=representation',
+        },
+        body: itemPayload,
+      });
+
+      if (!itemResponse.ok) {
+        throw new Error(await getSupabaseErrorMessage(itemResponse, 'wishlist-write'));
+      }
+    }
+
+    await loadLiveWishlists();
+    loadWishlistFormForMember(targetMember.id);
+    setAdminNotice(`${targetMember.displayName} now has an active wish list for this week.`, 'success');
+  } catch (error) {
+    setAdminNotice(error instanceof Error ? error.message : 'Could not save this wish list.', 'error');
+  } finally {
+    state.admin.isBusy = false;
+    render();
+  }
+}
+
+async function handleAdminMemberLinkSubmit(event) {
+  if (!canManageMembers()) {
+    setAdminNotice('This account does not have permission to link member accounts.', 'error');
+    render();
+    return;
+  }
+
+  const formData = new FormData(event.target);
+  const email = cleanText(formData.get('linked_email')).toLowerCase();
+  const memberId = cleanText(formData.get('linked_member_id'));
+  const targetMember = findMemberById(memberId);
+
+  if (!email) {
+    setAdminNotice('Email is required for member account linking.', 'error');
+    render();
+    return;
+  }
+
+  if (!targetMember) {
+    setAdminNotice('Choose a member to link.', 'error');
+    render();
+    return;
+  }
+
+  state.admin.isBusy = true;
+  setAdminNotice(`Linking ${email} to ${targetMember.displayName}...`, 'muted');
+  render();
+
+  try {
+    const response = await supabaseFetch('member_accounts', {
+      method: 'POST',
+      query: new URLSearchParams({ on_conflict: 'email' }).toString(),
+      useSession: true,
+      headers: {
+        Prefer: 'resolution=merge-duplicates,return=representation',
+      },
+      body: {
+        email,
+        member_id: memberId,
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error(await getSupabaseErrorMessage(response, 'member-link'));
+    }
+
+    if (cleanText(state.admin.session?.user?.email).toLowerCase() === email) {
+      await loadCurrentMemberAccount();
+    }
+
+    state.admin.memberLinkForm = createMemberLinkForm(state.admin.session, {
+      email,
+      memberId,
+    });
+    setAdminNotice(`${email} is now linked to ${targetMember.displayName}.`, 'success');
+  } catch (error) {
+    setAdminNotice(error instanceof Error ? error.message : 'Could not link that member account.', 'error');
   } finally {
     state.admin.isBusy = false;
     render();
@@ -2238,16 +3172,16 @@ async function deactivateMember(memberId) {
 }
 
 async function deactivateEvent(eventId) {
-  if (!canManageEvents()) {
-    setAdminNotice('This account does not have permission to manage events.', 'error');
-    render();
-    return;
-  }
-
   const calendarEvent = getEvents().find((entry) => entry.id === eventId);
 
   if (!calendarEvent) {
     setAdminNotice('That event could not be found.', 'error');
+    render();
+    return;
+  }
+
+  if (!canEditEvent(calendarEvent)) {
+    setAdminNotice('You can deactivate only events you created unless you have event manager access.', 'error');
     render();
     return;
   }
@@ -2324,7 +3258,11 @@ function buildEventPayload(formData) {
   const startTime = normalizeEventTime(formData.get('start_time'));
   const endTime = normalizeEventTime(formData.get('end_time'));
   const timezone = cleanText(formData.get('timezone')) || DEFAULT_EVENT_TIMEZONE;
-  const hostName = cleanText(formData.get('host_name'));
+  const linkedMember = getLinkedEventMember();
+  const isMemberOwnedEvent = !canManageEvents() && Boolean(linkedMember);
+  const hostName = isMemberOwnedEvent
+    ? cleanText(linkedMember?.facebookName || linkedMember?.displayName)
+    : cleanText(formData.get('host_name'));
   const locationText = normalizeNullableText(formData.get('location_text'));
   const details = normalizeNullableText(formData.get('details'));
   const matchedMember = findMemberByName(hostName);
@@ -2353,7 +3291,9 @@ function buildEventPayload(formData) {
     end_time: endTime || null,
     timezone,
     host_name: hostName || null,
-    host_member_id: matchedMember && isUuid(matchedMember.id) ? matchedMember.id : null,
+    host_member_id: isMemberOwnedEvent
+      ? (isUuid(linkedMember?.id) ? linkedMember.id : null)
+      : (matchedMember && isUuid(matchedMember.id) ? matchedMember.id : null),
     location_text: locationText,
     details,
     yes_count: normalizeCountInput(formData.get('yes_count')),
@@ -2361,6 +3301,82 @@ function buildEventPayload(formData) {
     no_count: normalizeCountInput(formData.get('no_count')),
     is_active: true,
   };
+}
+
+function buildWishlistPostPayload(formData, member) {
+  const summary = cleanText(formData.get('summary'));
+  const statusNote = cleanText(formData.get('status_note'));
+  const thankYouNote = cleanText(formData.get('thank_you_note'));
+
+  return {
+    member_id: member.id,
+    week_start_date: getCurrentWishlistWeekStartIso(),
+    member_name_snapshot: member.facebookName || member.displayName,
+    member_in_game_name_snapshot: normalizeNullableText(member.inGameName),
+    house_key_snapshot: normalizeNullableText(member.houseKey),
+    summary: summary || 'Weekly wish list for the current Sunday reset.',
+    status_note: statusNote || 'Wish list posted for this week.',
+    thank_you_note: normalizeNullableText(thankYouNote),
+    is_active: true,
+  };
+}
+
+function buildWishlistItemPayloads(formData, wishlistId) {
+  const payload = [];
+  let outOfStoreCount = 0;
+
+  for (let index = 0; index < WISHLIST_ITEM_SLOT_COUNT; index += 1) {
+    const itemName = cleanText(formData.get(`item_name_${index}`));
+    const imageUrlInput = cleanText(formData.get(`item_image_url_${index}`));
+    const sourceUrlInput = cleanText(formData.get(`item_source_url_${index}`));
+    const receivedFrom = cleanText(formData.get(`received_from_${index}`));
+    const availabilityStatus = normalizeWishlistAvailability(formData.get(`availability_status_${index}`));
+    const isReceived = formData.get(`is_received_${index}`) !== null;
+    const safeImageUrl = sanitizeUrl(imageUrlInput);
+    const safeSourceUrl = sanitizeUrl(sourceUrlInput);
+    const hasAnyValue = Boolean(itemName || imageUrlInput || sourceUrlInput || receivedFrom || isReceived);
+
+    if (!hasAnyValue) {
+      continue;
+    }
+
+    if (!itemName) {
+      throw new Error(`Item ${index + 1} needs a name before it can be saved.`);
+    }
+
+    if (imageUrlInput && !safeImageUrl) {
+      throw new Error(`Item ${index + 1} has an invalid image URL.`);
+    }
+
+    if (sourceUrlInput && !safeSourceUrl) {
+      throw new Error(`Item ${index + 1} has an invalid item source link.`);
+    }
+
+    if (availabilityStatus === 'out_of_store') {
+      outOfStoreCount += 1;
+    }
+
+    payload.push({
+      wishlist_id: wishlistId,
+      sort_order: payload.length + 1,
+      item_name: itemName,
+      item_image_url: safeImageUrl || null,
+      item_source_url: safeSourceUrl || null,
+      availability_status: availabilityStatus,
+      is_received: isReceived,
+      received_from: normalizeNullableText(receivedFrom),
+    });
+  }
+
+  if (!payload.length) {
+    throw new Error('Add at least one wish list item before saving the board.');
+  }
+
+  if (outOfStoreCount > WISHLIST_OUT_OF_STORE_LIMIT) {
+    throw new Error(`Only ${WISHLIST_OUT_OF_STORE_LIMIT} items can be marked out of store each week.`);
+  }
+
+  return payload;
 }
 
 function parseBirthdayInput(value) {
@@ -2433,7 +3449,7 @@ async function loadLiveEvents() {
 
   try {
     const query = new URLSearchParams({
-      select: 'id,title,event_type,event_date,start_time,end_time,timezone,host_name,host_member_id,location_text,details,yes_count,maybe_count,no_count,is_active',
+      select: 'id,title,event_type,event_date,start_time,end_time,timezone,host_name,host_member_id,location_text,details,yes_count,maybe_count,no_count,is_active,created_by_email',
       is_active: 'eq.true',
       order: 'event_date.asc,start_time.asc.nullslast,title.asc',
     }).toString();
@@ -2461,6 +3477,71 @@ async function loadLiveEvents() {
   render();
 }
 
+async function loadLiveWishlists() {
+  if (!hasSupabaseConfig) {
+    return;
+  }
+
+  try {
+    const postsQuery = new URLSearchParams({
+      select:
+        'id,member_id,week_start_date,member_name_snapshot,member_in_game_name_snapshot,house_key_snapshot,summary,status_note,thank_you_note,is_active,created_at,updated_at',
+      week_start_date: `eq.${getCurrentWishlistWeekStartIso()}`,
+      is_active: 'eq.true',
+      order: 'updated_at.desc,member_name_snapshot.asc',
+    }).toString();
+    const postsResponse = await supabaseFetch('wishlist_posts', {
+      query: postsQuery,
+      method: 'GET',
+    });
+
+    if (!postsResponse.ok) {
+      throw new Error(await getSupabaseErrorMessage(postsResponse, 'wishlists'));
+    }
+
+    const wishlistRows = await postsResponse.json();
+    const normalizedPosts = Array.isArray(wishlistRows) ? wishlistRows : [];
+    let itemRows = [];
+
+    if (normalizedPosts.length) {
+      const wishlistIds = normalizedPosts
+        .map((row) => cleanText(row.id))
+        .filter(Boolean)
+        .join(',');
+
+      if (wishlistIds) {
+        const itemsQuery = new URLSearchParams({
+          select: 'id,wishlist_id,sort_order,item_name,item_image_url,item_source_url,availability_status,is_received,received_from',
+          wishlist_id: `in.(${wishlistIds})`,
+          order: 'wishlist_id.asc,sort_order.asc',
+        }).toString();
+        const itemsResponse = await supabaseFetch('wishlist_items', {
+          query: itemsQuery,
+          method: 'GET',
+        });
+
+        if (!itemsResponse.ok) {
+          throw new Error(await getSupabaseErrorMessage(itemsResponse, 'wishlists'));
+        }
+
+        const liveItems = await itemsResponse.json();
+        itemRows = Array.isArray(liveItems) ? liveItems : [];
+      }
+    }
+
+    state.wishlists = normalizeSupabaseWishlists(normalizedPosts, itemRows);
+    state.wishlistSource = 'live';
+    state.wishlistSourceMessage = `Loaded ${state.wishlists.length} active wish lists for this week.`;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Could not load the weekly wish list board.';
+    state.wishlists = normalizeMockWishlists(mockWishlists);
+    state.wishlistSource = /private|policy|permission|forbidden|unauthorized/i.test(message) ? 'restricted' : 'error';
+    state.wishlistSourceMessage = message;
+  }
+
+  render();
+}
+
 async function getSupabaseErrorMessage(response, context = 'read') {
   if (response.status === 401 || response.status === 403) {
     if (context === 'write') {
@@ -2479,6 +3560,18 @@ async function getSupabaseErrorMessage(response, context = 'read') {
       return 'The events calendar is still private. Run supabase/08_events_calendar.sql when you are ready for browser reads.';
     }
 
+    if (context === 'wishlists') {
+      return 'The weekly wish list board is still private. Run supabase/11_weekly_wishlists.sql when you are ready for browser reads.';
+    }
+
+    if (context === 'wishlist-write') {
+      return 'This signed-in account does not have permission to edit wish lists yet.';
+    }
+
+    if (context === 'member-link') {
+      return 'This signed-in account does not have permission to link member logins yet.';
+    }
+
     return 'The members table is still private. Run supabase/02_enable_member_directory_read.sql when you are ready for browser reads.';
   }
 
@@ -2489,6 +3582,10 @@ async function getSupabaseErrorMessage(response, context = 'read') {
 
     if (context === 'events' || context === 'event-write') {
       return 'The events table is not available yet. Run supabase/08_events_calendar.sql.';
+    }
+
+    if (context === 'wishlists' || context === 'wishlist-write' || context === 'member-link') {
+      return 'The weekly wish list tables are not available yet. Run supabase/11_weekly_wishlists.sql.';
     }
 
     return 'The members table is not available yet. Run the schema SQL and confirm the table exists in Supabase.';
@@ -2504,6 +3601,42 @@ async function getSupabaseErrorMessage(response, context = 'read') {
 
 function normalizeMockMembers(sourceMembers) {
   return sourceMembers.map((member, index) => normalizeMockMember(member, index));
+}
+
+function normalizeMockWishlists(sourceWishlists, memberDirectory = []) {
+  return sourceWishlists.map((wishlist, index) => normalizeMockWishlist(wishlist, index, memberDirectory));
+}
+
+function normalizeMockWishlist(wishlist, index, memberDirectory = []) {
+  const wishlistId = cleanText(wishlist.id) || `wishlist-${index + 1}`;
+  const memberName = cleanText(wishlist.memberName || wishlist.member || `Wishlist ${index + 1}`);
+  const matchedMember = findMemberByName(memberName, memberDirectory);
+
+  return buildWishlistModel(
+    {
+      id: wishlistId,
+      memberId: cleanText(wishlist.memberId || matchedMember?.id),
+      memberName,
+      inGameName: cleanText(wishlist.inGameName || matchedMember?.inGameName),
+      houseKey: cleanText(wishlist.houseKey || matchedMember?.houseKey),
+      homeLink: sanitizeUrl(cleanText(wishlist.homeLink || matchedMember?.homeLink)),
+      imageUrl: buildAssetUrl(wishlist.imagePath || wishlist.imageUrl),
+      weekStartDate: cleanText(wishlist.weekStartDate) || getCurrentWishlistWeekStartIso(),
+      weekLabel: cleanText(wishlist.weekLabel),
+      summary: cleanText(wishlist.summary),
+      statusNote: cleanText(wishlist.statusNote || wishlist.updateNote),
+      thankYouNote: cleanText(wishlist.thankYouNote),
+      thankYouTo: Array.isArray(wishlist.thankYouTo)
+        ? wishlist.thankYouTo.map((name) => cleanText(name)).filter(Boolean)
+        : [],
+      lastUpdatedLabel: cleanText(wishlist.lastUpdatedLabel),
+      isActive: wishlist.isActive !== false,
+      items: normalizeWishlistItems(wishlist.items, wishlistId),
+      updatedAt: cleanText(wishlist.updatedAt),
+      createdAt: cleanText(wishlist.createdAt),
+    },
+    index,
+  );
 }
 
 function normalizeMockEvents(sourceEvents) {
@@ -2531,6 +3664,8 @@ function normalizeMockEvent(calendarEvent, index) {
     timezone,
     whenLabel: cleanText(calendarEvent.when) || formatEventWhenLabel(eventDate, startTime, endTime, timezone),
     hostName: cleanText(calendarEvent.host || calendarEvent.hostName),
+    hostMemberId: cleanText(calendarEvent.hostMemberId),
+    createdByEmail: cleanText(calendarEvent.createdByEmail).toLowerCase(),
     locationText: cleanText(calendarEvent.locationText || calendarEvent.location),
     details: cleanText(calendarEvent.details || calendarEvent.note),
     yesCount: normalizeEventCount(calendarEvent.yes),
@@ -2575,8 +3710,50 @@ function normalizeSupabaseMembers(rows) {
   return rows.map((row, index) => normalizeSupabaseMember(row, index));
 }
 
+function normalizeSupabaseWishlists(rows, itemRows) {
+  const itemsByWishlistId = new Map();
+
+  itemRows.forEach((row) => {
+    const wishlistId = cleanText(row.wishlist_id);
+
+    if (!wishlistId) {
+      return;
+    }
+
+    const currentItems = itemsByWishlistId.get(wishlistId) || [];
+    currentItems.push(row);
+    itemsByWishlistId.set(wishlistId, currentItems);
+  });
+
+  return rows.map((row, index) => normalizeSupabaseWishlist(row, index, itemsByWishlistId.get(cleanText(row.id)) || []));
+}
+
 function normalizeSupabaseEvents(rows) {
   return rows.map((row, index) => normalizeSupabaseEvent(row, index));
+}
+
+function normalizeSupabaseWishlist(row, index, itemRows) {
+  const fallbackMember = findMemberById(row.member_id);
+
+  return buildWishlistModel(
+    {
+      id: cleanText(row.id) || `wishlist-live-${index + 1}`,
+      memberId: cleanText(row.member_id) || cleanText(fallbackMember?.id),
+      memberName: cleanText(row.member_name_snapshot || fallbackMember?.facebookName || fallbackMember?.displayName || `Wishlist ${index + 1}`),
+      inGameName: cleanText(row.member_in_game_name_snapshot || fallbackMember?.inGameName),
+      houseKey: cleanText(row.house_key_snapshot || fallbackMember?.houseKey),
+      homeLink: buildHomeLink(cleanText(row.house_key_snapshot || fallbackMember?.houseKey)),
+      weekStartDate: cleanText(row.week_start_date),
+      summary: cleanText(row.summary),
+      statusNote: cleanText(row.status_note),
+      thankYouNote: cleanText(row.thank_you_note),
+      isActive: row.is_active !== false,
+      items: normalizeWishlistItems(itemRows, cleanText(row.id) || `wishlist-live-${index + 1}`),
+      updatedAt: cleanText(row.updated_at),
+      createdAt: cleanText(row.created_at),
+    },
+    index,
+  );
 }
 
 function normalizeSupabaseEvent(row, index) {
@@ -2599,6 +3776,8 @@ function normalizeSupabaseEvent(row, index) {
     timezone,
     whenLabel: formatEventWhenLabel(eventDate, startTime, endTime, timezone),
     hostName: cleanText(row.host_name),
+    hostMemberId: cleanText(row.host_member_id),
+    createdByEmail: cleanText(row.created_by_email).toLowerCase(),
     locationText: cleanText(row.location_text),
     details: cleanText(row.details),
     yesCount: normalizeEventCount(row.yes_count),
@@ -2891,6 +4070,173 @@ function compareEvents(left, right) {
   return left.title.localeCompare(right.title) || left.sortOrder - right.sortOrder;
 }
 
+function compareWishlists(left, right) {
+  if (left.isActive !== right.isActive) {
+    return left.isActive ? -1 : 1;
+  }
+
+  const leftWeekStart = cleanText(left.weekStartDate) || '0000-00-00';
+  const rightWeekStart = cleanText(right.weekStartDate) || '0000-00-00';
+
+  if (leftWeekStart !== rightWeekStart) {
+    return rightWeekStart.localeCompare(leftWeekStart);
+  }
+
+  return left.memberName.localeCompare(right.memberName) || left.sortOrder - right.sortOrder;
+}
+
+function normalizeWishlistItems(items, parentId = '') {
+  return Array.isArray(items)
+    ? items
+        .map((item, index) => normalizeWishlistItem(item, index, parentId))
+        .filter((item) => Boolean(item.name || item.imageUrl || item.sourceUrl || item.receivedFrom || item.isReceived))
+        .sort((left, right) => left.sortOrder - right.sortOrder)
+    : [];
+}
+
+function normalizeWishlistItem(item, index, parentId = '') {
+  return {
+    id: cleanText(item?.id) || `${parentId || 'wishlist'}-item-${index + 1}`,
+    name: cleanText(item?.item_name || item?.name),
+    imageUrl: buildAssetUrl(item?.item_image_url || item?.imageUrl),
+    sourceUrl: sanitizeUrl(cleanText(item?.item_source_url || item?.sourceUrl)),
+    availabilityStatus: normalizeWishlistAvailability(item?.availability_status || item?.availabilityStatus),
+    isReceived: Boolean(item?.is_received ?? item?.isReceived),
+    receivedFrom: cleanText(item?.received_from || item?.receivedFrom),
+    sortOrder: parseNullableInt(item?.sort_order || item?.sortOrder) || index + 1,
+  };
+}
+
+function buildWishlistModel(values, index) {
+  const items = normalizeWishlistItems(values.items, values.id);
+  const thankYouTo = Array.isArray(values.thankYouTo)
+    ? [...new Set(values.thankYouTo.map((name) => cleanText(name)).filter(Boolean))]
+    : [];
+  const weekStartDate = cleanText(values.weekStartDate) || getCurrentWishlistWeekStartIso();
+  const homeLink = sanitizeUrl(cleanText(values.homeLink)) || buildHomeLink(values.houseKey);
+  const totalItems = items.length;
+  const outOfStoreCount = items.filter((item) => item.availabilityStatus === 'out_of_store').length;
+  const receivedCount = items.filter((item) => item.isReceived).length;
+  const thankYouSummary = thankYouTo.length
+    ? `Thanked ${thankYouTo.length} ${thankYouTo.length === 1 ? 'gifter' : 'gifters'}`
+    : cleanText(values.thankYouNote)
+      ? 'Public thank-you note posted'
+      : 'No thank-you notes yet';
+
+  return {
+    id: cleanText(values.id) || `wishlist-${index + 1}`,
+    memberId: cleanText(values.memberId),
+    memberName: cleanText(values.memberName) || `Wishlist ${index + 1}`,
+    inGameName: cleanText(values.inGameName),
+    houseKey: cleanText(values.houseKey),
+    homeLink,
+    imageUrl: buildAssetUrl(values.imageUrl),
+    weekStartDate,
+    weekLabel: cleanText(values.weekLabel) || formatWishlistWeekLabel(weekStartDate),
+    summary: cleanText(values.summary) || 'Weekly wishlist for the current Sunday reset.',
+    statusNote: cleanText(values.statusNote) || 'Wishlist posted for this week.',
+    updateNote: cleanText(values.statusNote) || 'Wishlist posted for this week.',
+    thankYouNote: cleanText(values.thankYouNote),
+    thankYouTo,
+    thankYouSummary,
+    lastUpdatedLabel: cleanText(values.lastUpdatedLabel) || formatWishlistLastUpdatedLabel(values.updatedAt || values.createdAt),
+    updatedAt: cleanText(values.updatedAt),
+    createdAt: cleanText(values.createdAt),
+    isActive: values.isActive !== false,
+    items,
+    totalItems,
+    outOfStoreCount,
+    receivedCount,
+    sortOrder: index,
+  };
+}
+
+function summarizeWishlistItems(items) {
+  const normalizedItems = Array.isArray(items) ? items : [];
+
+  return normalizedItems.reduce(
+    (summary, item) => {
+      const hasContent = Boolean(cleanText(item?.name) || cleanText(item?.imageUrl) || cleanText(item?.sourceUrl) || cleanText(item?.receivedFrom) || item?.isReceived);
+
+      if (!hasContent) {
+        return summary;
+      }
+
+      return {
+        total: summary.total + 1,
+        outOfStore: summary.outOfStore + (normalizeWishlistAvailability(item?.availabilityStatus) === 'out_of_store' ? 1 : 0),
+        received: summary.received + (item?.isReceived ? 1 : 0),
+      };
+    },
+    { total: 0, outOfStore: 0, received: 0 },
+  );
+}
+
+function normalizeWishlistAvailability(value) {
+  return cleanText(value).toLowerCase() === 'out_of_store' ? 'out_of_store' : 'in_store';
+}
+
+function formatWishlistAvailabilityLabel(value) {
+  return normalizeWishlistAvailability(value) === 'out_of_store' ? 'Out of Store' : 'In Store';
+}
+
+function getCurrentWishlistWeekStartIso(now = new Date()) {
+  const formatter = new Intl.DateTimeFormat('en-US', {
+    timeZone: WISHLIST_TIMEZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    weekday: 'short',
+  });
+  const parts = formatter.formatToParts(now);
+  const year = Number.parseInt(parts.find((part) => part.type === 'year')?.value || '', 10);
+  const month = Number.parseInt(parts.find((part) => part.type === 'month')?.value || '', 10);
+  const day = Number.parseInt(parts.find((part) => part.type === 'day')?.value || '', 10);
+  const weekdayToken = cleanText(parts.find((part) => part.type === 'weekday')?.value).slice(0, 3).toLowerCase();
+  const weekdayIndex = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'].indexOf(weekdayToken);
+  const etDate = new Date(Date.UTC(year, month - 1, day));
+
+  etDate.setUTCDate(etDate.getUTCDate() - Math.max(weekdayIndex, 0));
+
+  return `${etDate.getUTCFullYear()}-${String(etDate.getUTCMonth() + 1).padStart(2, '0')}-${String(etDate.getUTCDate()).padStart(2, '0')}`;
+}
+
+function isWishlistCurrentWeek(weekStartDate) {
+  return cleanText(weekStartDate) === getCurrentWishlistWeekStartIso();
+}
+
+function formatWishlistWeekLabel(weekStartDate) {
+  const parts = parseIsoDateParts(weekStartDate);
+
+  if (!parts) {
+    return 'Resets Sunday ET';
+  }
+
+  const date = new Date(parts.year, parts.monthIndex, parts.day);
+  const label = date.toLocaleString('en-US', {
+    month: 'long',
+    day: 'numeric',
+  });
+
+  return `Week of ${label} • Sunday ET reset`;
+}
+
+function formatWishlistLastUpdatedLabel(value) {
+  const normalizedValue = cleanText(value);
+
+  if (!normalizedValue) {
+    return 'Updated this week';
+  }
+
+  const parsedDate = new Date(normalizedValue);
+
+  if (Number.isNaN(parsedDate.getTime())) {
+    return 'Updated this week';
+  }
+
+  return `Updated ${parsedDate.toLocaleString('en-US', { month: 'short', day: 'numeric' })}`;
+}
+
 function normalizeEventCount(value) {
   const parsed = Number.parseInt(value ?? 0, 10);
   return Number.isNaN(parsed) || parsed < 0 ? 0 : parsed;
@@ -2912,6 +4258,20 @@ function normalizeCountInput(value) {
   return parsed;
 }
 
+function buildAssetUrl(value) {
+  const rawValue = cleanText(value);
+
+  if (!rawValue) {
+    return '';
+  }
+
+  try {
+    return new URL(rawValue, window.location.href).href;
+  } catch {
+    return '';
+  }
+}
+
 function getDefaultEventDescription(eventType) {
   switch (normalizeEventType(eventType)) {
     case 'birthday_party':
@@ -2928,18 +4288,51 @@ function getDefaultEventDescription(eventType) {
   }
 }
 
-function findMemberByName(value) {
+function findMemberByName(value, members = getMembers()) {
   const lookup = cleanText(value).toLowerCase();
 
   if (!lookup) {
     return null;
   }
 
-  return getMembers().find((member) => {
+  return members.find((member) => {
     return [member.facebookName, member.displayName, member.inGameName]
       .map((name) => cleanText(name).toLowerCase())
       .includes(lookup);
   }) || null;
+}
+
+function findMemberById(memberId) {
+  const normalizedMemberId = cleanText(memberId);
+
+  if (!normalizedMemberId) {
+    return null;
+  }
+
+  return getMembers().find((member) => cleanText(member.id) === normalizedMemberId) || null;
+}
+
+function getLinkedEventMember() {
+  return getLinkedWishlistMember();
+}
+
+function getEventEditorFormState() {
+  const linkedMember = getLinkedEventMember();
+
+  if (canManageEvents() || !linkedMember) {
+    return state.admin.eventForm;
+  }
+
+  return {
+    ...state.admin.eventForm,
+    hostName: cleanText(state.admin.eventForm.hostName) || cleanText(linkedMember.facebookName || linkedMember.displayName),
+  };
+}
+
+function scheduleScrollTo(selector) {
+  window.requestAnimationFrame(() => {
+    document.querySelector(selector)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  });
 }
 
 function normalizeGroupRole(value) {
