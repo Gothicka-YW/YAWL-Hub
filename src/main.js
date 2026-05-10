@@ -62,6 +62,37 @@ const EVENT_TYPE_DETAILS = {
   special_event: { label: 'Special Event', indicator: 'S', className: 'event-type-icon--special-event' },
 };
 const EVENT_TYPE_ORDER = ['birthday_party', 'meet_up', 'game', 'special_event'];
+const ADMIN_AUTH_FIELD_MAP = {
+  email: 'email',
+  password: 'password',
+};
+const ADMIN_MEMBER_FIELD_MAP = {
+  facebook_name: 'facebookName',
+  in_game_name: 'inGameName',
+  house_key: 'houseKey',
+  birthday_raw: 'birthdayRaw',
+  group_role: 'groupRole',
+  notes: 'notes',
+};
+const ADMIN_EVENT_FIELD_MAP = {
+  event_type: 'eventType',
+  custom_event_type: 'customEventType',
+  title: 'title',
+  event_date: 'eventDate',
+  start_time: 'startTime',
+  end_time: 'endTime',
+  timezone: 'timezone',
+  host_name: 'hostName',
+  location_text: 'locationText',
+  yes_count: 'yesCount',
+  maybe_count: 'maybeCount',
+  no_count: 'noCount',
+  details: 'details',
+};
+const ADMIN_PASSWORD_RESET_FIELD_MAP = {
+  new_password: 'newPassword',
+  confirm_password: 'confirmPassword',
+};
 const DEFAULT_EVENT_TIMEZONE = cleanText(window.YAWL_CONFIG.defaultEventTimezone || 'ET') || 'ET';
 
 const defaultPrivateState = {
@@ -88,15 +119,6 @@ render();
 void loadLiveMembers();
 void loadLiveEvents();
 void initializeAdminSession();
-
-window.addEventListener('focus', () => {
-  if (!hasSupabaseConfig) {
-    return;
-  }
-
-  void loadLiveMembers();
-  void loadLiveEvents();
-});
 
 app.addEventListener('click', async (event) => {
   const navButton = event.target.closest('[data-section]');
@@ -173,7 +195,14 @@ app.addEventListener('input', (event) => {
     };
 
     savePrivateState();
+    return;
   }
+
+  syncAdminDraftField(event.target);
+});
+
+app.addEventListener('change', (event) => {
+  syncAdminDraftField(event.target);
 });
 
 app.addEventListener('submit', async (event) => {
@@ -1024,6 +1053,8 @@ function renderAdmin() {
 }
 
 function renderAdminAuthPanel() {
+  const authForm = state.admin.authForm;
+
   return `
     <article class="panel panel--announcement">
       <p class="eyebrow">Account Access</p>
@@ -1034,11 +1065,11 @@ function renderAdminAuthPanel() {
         <div class="form-grid">
           <label class="field-group">
             <span>Email</span>
-            <input class="text-input" type="email" name="email" value="${escapeHtml(state.admin.session?.user?.email || '')}" autocomplete="email" required />
+            <input class="text-input" type="email" name="email" value="${escapeHtml(authForm.email)}" autocomplete="email" required />
           </label>
           <label class="field-group">
             <span>Password</span>
-            <input class="text-input" type="password" name="password" autocomplete="current-password" />
+            <input class="text-input" type="password" name="password" value="${escapeHtml(authForm.password)}" autocomplete="current-password" />
             <small class="field-help">Required for Sign In and Create Account. Leave it blank when sending a reset link.</small>
           </label>
         </div>
@@ -1053,6 +1084,7 @@ function renderAdminAuthPanel() {
 }
 
 function renderPasswordRecoveryPanel() {
+  const passwordResetForm = state.admin.passwordResetForm;
   const sessionEmail = cleanText(state.admin.session?.user?.email || '');
   const recoveryMessage = sessionEmail
     ? `Recovery link confirmed for ${sessionEmail}. Enter a new password below.`
@@ -1067,11 +1099,11 @@ function renderPasswordRecoveryPanel() {
         <div class="form-grid">
           <label class="field-group">
             <span>New Password</span>
-            <input class="text-input" type="password" name="new_password" autocomplete="new-password" required />
+            <input class="text-input" type="password" name="new_password" value="${escapeHtml(passwordResetForm.newPassword)}" autocomplete="new-password" required />
           </label>
           <label class="field-group">
             <span>Confirm Password</span>
-            <input class="text-input" type="password" name="confirm_password" autocomplete="new-password" required />
+            <input class="text-input" type="password" name="confirm_password" value="${escapeHtml(passwordResetForm.confirmPassword)}" autocomplete="new-password" required />
           </label>
         </div>
         <div class="button-row admin-form-actions">
@@ -1668,14 +1700,18 @@ function renderEventSourceNotice() {
 }
 
 function createDefaultAdminState() {
+  const storedSession = getStoredSession();
+
   return {
-    session: getStoredSession(),
+    session: storedSession,
     staffProfile: null,
     isReady: false,
     isBusy: false,
     notice: '',
     noticeTone: 'muted',
     isRecoveryMode: false,
+    authForm: createAdminAuthForm(storedSession),
+    passwordResetForm: createPasswordResetForm(),
     editingMemberId: '',
     form: createEmptyMemberForm(),
     editingEventId: '',
@@ -1696,6 +1732,20 @@ function createEmptyMemberForm(member = null) {
     birthdayRaw: cleanText(member?.birthdayRaw),
     groupRole: normalizeGroupRole(member?.groupRole),
     notes: cleanText(member?.notes),
+  };
+}
+
+function createAdminAuthForm(session = null) {
+  return {
+    email: cleanText(session?.user?.email),
+    password: '',
+  };
+}
+
+function createPasswordResetForm() {
+  return {
+    newPassword: '',
+    confirmPassword: '',
   };
 }
 
@@ -1728,6 +1778,14 @@ async function initializeAdminSession(showRefreshMessage = false) {
   state.admin.session = session;
   state.admin.staffProfile = null;
   state.admin.isRecoveryMode = Boolean(redirectSession.session && redirectSession.type === 'recovery');
+  state.admin.authForm = {
+    ...state.admin.authForm,
+    email: state.admin.authForm.email || cleanText(session?.user?.email),
+  };
+
+  if (state.admin.isRecoveryMode) {
+    state.admin.passwordResetForm = createPasswordResetForm();
+  }
 
   if (session) {
     await loadStaffProfile();
@@ -1835,21 +1893,35 @@ async function handleAdminAuthSubmit(event) {
   try {
     if (mode === 'send-reset-link') {
       await sendPasswordResetEmail(email, buildPasswordResetRedirectUrl());
+      state.admin.authForm = {
+        email,
+        password: '',
+      };
       setAdminNotice('Password reset link sent. Check your email, open the link in this browser, and then choose a new password here.', 'success');
     } else if (mode === 'create-account') {
       const result = await signUpWithPassword(email, password);
 
       if (result.session) {
         state.admin.session = result.session;
+        state.admin.authForm = createAdminAuthForm(result.session);
         await loadStaffProfile();
       } else if (result.needsEmailConfirmation) {
         state.admin.session = null;
+        state.admin.authForm = {
+          email,
+          password: '',
+        };
         setAdminNotice('Account created. Check your email to confirm it, then come back and sign in.', 'success');
       } else {
+        state.admin.authForm = {
+          email,
+          password: '',
+        };
         setAdminNotice('Account created. You can sign in now.', 'success');
       }
     } else {
       state.admin.session = await signInWithPassword(email, password);
+      state.admin.authForm = createAdminAuthForm(state.admin.session);
       await loadStaffProfile();
     }
   } catch (error) {
@@ -1897,6 +1969,7 @@ async function handlePasswordResetSubmit(event) {
   try {
     state.admin.session = await updatePassword(newPassword);
     state.admin.isRecoveryMode = false;
+    state.admin.passwordResetForm = createPasswordResetForm();
     await loadStaffProfile();
     setAdminNotice('Password updated. You are signed in with your new password.', 'success');
   } catch (error) {
@@ -1955,6 +2028,44 @@ function resetAdminEventEditor() {
   state.admin.editingEventId = '';
   state.admin.eventForm = createEmptyEventForm();
   setAdminNotice('Event form reset.', 'muted');
+}
+
+function syncAdminDraftField(target) {
+  if (!(target instanceof Element) || !target.name) {
+    return;
+  }
+
+  if (target.closest('[data-admin-auth-form]')) {
+    syncAdminDraftState('authForm', ADMIN_AUTH_FIELD_MAP, target);
+    return;
+  }
+
+  if (target.closest('[data-admin-member-form]')) {
+    syncAdminDraftState('form', ADMIN_MEMBER_FIELD_MAP, target);
+    return;
+  }
+
+  if (target.closest('[data-admin-event-form]')) {
+    syncAdminDraftState('eventForm', ADMIN_EVENT_FIELD_MAP, target);
+    return;
+  }
+
+  if (target.closest('[data-admin-password-reset-form]')) {
+    syncAdminDraftState('passwordResetForm', ADMIN_PASSWORD_RESET_FIELD_MAP, target);
+  }
+}
+
+function syncAdminDraftState(stateKey, fieldMap, target) {
+  const draftKey = fieldMap[target.name];
+
+  if (!draftKey) {
+    return;
+  }
+
+  state.admin[stateKey] = {
+    ...state.admin[stateKey],
+    [draftKey]: target.value,
+  };
 }
 
 async function handleAdminMemberSubmit(event) {
