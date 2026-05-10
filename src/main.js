@@ -567,16 +567,6 @@ function renderDashboardCalendarCell(cell) {
 
 function renderLaunchpadPanel() {
   const tiles = [
-    yoKeysWidgetUrl
-      ? renderLinkLaunchTile(
-          'Standalone Tool',
-          'YoKeys Widget',
-          'Keep personal keys and saved friend homes in a dedicated space outside the hub.',
-          yoKeysWidgetUrl,
-          'Open widget',
-          'launch-tile--accent',
-        )
-      : '',
     facebookGroupUrl
       ? renderLinkLaunchTile(
           'Community',
@@ -585,6 +575,32 @@ function renderLaunchpadPanel() {
           facebookGroupUrl,
           'Open group',
           '',
+        )
+      : '',
+    renderSectionLaunchTile(
+      'Directory',
+      'Member Homes',
+      'Browse home links quickly, then jump into your gifting route without leaving the main hub.',
+      'members',
+      'View members',
+      '',
+    ),
+    renderSectionLaunchTile(
+      'Private',
+      'Gift Tracker',
+      'Mark visits, keep private notes, and stay organized without sharing personal tracking data.',
+      'notes',
+      'Open notes',
+      '',
+    ),
+    yoKeysWidgetUrl
+      ? renderLinkLaunchTile(
+          'Standalone Tool',
+          'YoKeys Widget',
+          'Keep personal keys and saved friend homes in a dedicated space outside the hub.',
+          yoKeysWidgetUrl,
+          'Open widget',
+          'launch-tile--accent',
         )
       : '',
     facebookThreadUrl
@@ -597,22 +613,6 @@ function renderLaunchpadPanel() {
           '',
         )
       : '',
-    renderSectionLaunchTile(
-      'Private',
-      'Gift Tracker',
-      'Mark visits, keep private notes, and stay organized without sharing personal tracking data.',
-      'notes',
-      'Open notes',
-      '',
-    ),
-    renderSectionLaunchTile(
-      'Directory',
-      'Member Homes',
-      'Browse home links quickly, then jump into your gifting route without leaving the main hub.',
-      'members',
-      'View members',
-      '',
-    ),
   ].filter(Boolean);
 
   return `
