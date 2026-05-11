@@ -61,6 +61,22 @@
 			],
 			"isBackground": false,
 			"group": "build"
+		},
+		{
+			"label": "Apply YAWL SQL File(s)",
+			"type": "shell",
+			"command": "powershell",
+			"args": [
+				"-NoProfile",
+				"-ExecutionPolicy",
+				"Bypass",
+				"-File",
+				".\\scripts\\apply-supabase-sql.ps1",
+				"-Files",
+				"${input:yawlSupabaseSqlFiles}"
+			],
+			"isBackground": false,
+			"group": "build"
 		}
 	],
 	"inputs": [
@@ -69,6 +85,12 @@
 			"type": "promptString",
 			"description": "Supabase database password for project link",
 			"password": true
+		},
+		{
+			"id": "yawlSupabaseSqlFiles",
+			"type": "promptString",
+			"description": "Supabase SQL file path(s), separated by commas or semicolons",
+			"default": "supabase\\13_wishlist_image_uploads_and_comments.sql"
 		}
 	]
 }

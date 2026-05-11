@@ -38,6 +38,19 @@ if ($All) {
   $Files = $orderedRepoFiles
 }
 
+$Files = @($Files | ForEach-Object {
+  if ($_ -is [string]) {
+    $_ -split '[,;\r\n]'
+  } else {
+    $_
+  }
+} | ForEach-Object {
+  $value = if ($_ -is [string]) { $_.Trim() } else { $_ }
+  if ($value) {
+    $value
+  }
+})
+
 if (-not $Files -or $Files.Count -eq 0) {
   throw 'Pass -All to run the standard YAWL Hub SQL set or pass -Files with one or more SQL file paths.'
 }
