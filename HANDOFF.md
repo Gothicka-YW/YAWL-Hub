@@ -10,7 +10,7 @@ Last updated: 2026-05-06
 - Local-only data: private notes, gifted status, visited status.
 - Shared live data: member directory in Supabase.
 - Shared event calendar: supported in the app and enabled after `supabase/08_events_calendar.sql` is run. Existing projects that already used the older event-type constraint should also run `supabase/10_event_type_customization.sql`.
-- Weekly wishlist board now supports a live Supabase-backed current-week workflow after `supabase/11_weekly_wishlists.sql` is run.
+- Weekly wishlist board now supports a live Supabase-backed current-week image-post workflow after `supabase/11_weekly_wishlists.sql` and `supabase/13_wishlist_image_uploads_and_comments.sql` are run.
 - Supabase CLI is initialized for this repo; use the helper scripts in `scripts/` to link the project and run top-level SQL files from the terminal.
 
 ## What Is Working
@@ -19,7 +19,7 @@ Last updated: 2026-05-06
 - Members page uses a Facebook-first row layout.
 - YoWorld name is shown as the confirmation field for gifting.
 - Member roles are supported in the UI: admin, event planner, moderator, helper, member.
-- The Wishlists tab now supports a live weekly board with up to 20 items, a hard cap of 10 out-of-store items, and member-home links pulled from the linked member record.
+- The Wishlists tab now supports one PNG/JPEG image post per member for the current week, owner-only updates to that same post, public gift comments, and member-home links pulled from the linked member record.
 - Admin Tools now includes a member-email linking form so non-staff accounts can be tied to a member row for self-service wishlist posting.
 - Account section now supports:
   - Supabase email/password sign-in
@@ -47,7 +47,9 @@ Last updated: 2026-05-06
 - `supabase/07_admin_editor_auth_policies.sql`: required for the Account/Admin Tools flow to read staff permissions and perform role-safe writes.
 - `supabase/08_events_calendar.sql`: creates the shared events table, read policies, and event-manager write policies.
 - `supabase/10_event_type_customization.sql`: updates older event rows and constraints so Birthday Party, Meet Up, Game, Special Event, and custom event labels are supported.
-- `supabase/11_weekly_wishlists.sql`: creates member account links plus the live weekly wishlist and item tables with RLS and item-count limits.
+- `supabase/11_weekly_wishlists.sql`: creates member account links plus the live weekly wishlist and legacy item tables with RLS.
+- `supabase/12_member_owned_events.sql`: lets linked member accounts post and manage only their own events.
+- `supabase/13_wishlist_image_uploads_and_comments.sql`: adds the wishlist image storage bucket, image-post columns, and public gift comments.
 
 ## Required Supabase Run Order
 
@@ -63,6 +65,8 @@ If setting up from scratch:
 8. Run `supabase/08_events_calendar.sql`
 9. If the database already used the earlier event-type constraint, run `supabase/10_event_type_customization.sql`
 10. Run `supabase/11_weekly_wishlists.sql`
+11. Run `supabase/12_member_owned_events.sql` if linked members should manage their own events
+12. Run `supabase/13_wishlist_image_uploads_and_comments.sql`
 
 ## Sensitive Files Kept Local
 
@@ -79,15 +83,16 @@ They contain real member names, birthdays, and/or house-link data.
 
 Apply and test the live weekly wishlist flow against the real Supabase project:
 
-1. Confirm `supabase/11_weekly_wishlists.sql` has been run.
+1. Confirm `supabase/11_weekly_wishlists.sql` and `supabase/13_wishlist_image_uploads_and_comments.sql` have been run.
 2. Reload the app.
 3. Sign in as a staff account and open Admin Tools.
 4. Link at least one email to a member row.
 5. Open the Wishlists tab and verify:
   - the current-week board loads from Supabase
-  - a linked member can save a wishlist for the current Sunday reset
-  - the 20-item cap is respected
-  - the 10 out-of-store cap is respected
+  - a linked member can upload a PNG/JPEG wishlist for the current Sunday reset
+  - saving again updates the same post instead of creating a duplicate
+  - another normal member cannot update someone else's post
+  - people can add gift comments under the post
   - the home link button opens the member's saved house link
 
 ## Likely Next Improvement
@@ -99,4 +104,4 @@ Apply and test the live weekly wishlist flow against the real Supabase project:
 
 Use this prompt in a new chat if needed:
 
-"Continue work on YAWL Hub. The repo already has live Supabase member reads, a shared event calendar, and a live current-week wishlist system backed by `supabase/11_weekly_wishlists.sql`. Verify the new wishlist schema is applied, link a member email, and finish testing the self-service wishlist posting flow."
+"Continue work on YAWL Hub. The repo already has live Supabase member reads, a shared event calendar, and a live current-week wishlist image/comment system backed by `supabase/11_weekly_wishlists.sql` plus `supabase/13_wishlist_image_uploads_and_comments.sql`. Verify the new wishlist schema is applied, link a member email, and finish testing the self-service wishlist posting flow."

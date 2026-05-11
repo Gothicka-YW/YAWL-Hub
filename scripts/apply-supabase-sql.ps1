@@ -29,7 +29,9 @@ $orderedRepoFiles = @(
   'supabase\07_admin_editor_auth_policies.sql',
   'supabase\08_events_calendar.sql',
   'supabase\10_event_type_customization.sql',
-  'supabase\11_weekly_wishlists.sql'
+  'supabase\11_weekly_wishlists.sql',
+  'supabase\12_member_owned_events.sql',
+  'supabase\13_wishlist_image_uploads_and_comments.sql'
 )
 
 if ($All) {

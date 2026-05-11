@@ -19,6 +19,23 @@
     return buildApiUrl('auth/v1', path, query);
   }
 
+  function encodeStoragePath(path) {
+    return String(path || '')
+      .replace(/^\/+/, '')
+      .split('/')
+      .filter(Boolean)
+      .map((part) => encodeURIComponent(part))
+      .join('/');
+  }
+
+  function buildStorageObjectUrl(bucket, path) {
+    return `${supabaseUrl}/storage/v1/object/${encodeURIComponent(bucket)}/${encodeStoragePath(path)}`;
+  }
+
+  function buildStoragePublicUrl(bucket, path) {
+    return `${supabaseUrl}/storage/v1/object/public/${encodeURIComponent(bucket)}/${encodeStoragePath(path)}`;
+  }
+
   function getStoredSession() {
     try {
       const rawValue = window.localStorage.getItem(AUTH_STORAGE_KEY);
@@ -410,6 +427,54 @@
     });
   }
 
+  async function storageFetch(bucket, path, options = {}) {
+    if (!hasSupabaseConfig) {
+      throw new Error('Supabase is not configured. Add the URL and anon key in src/config.js first.');
+    }
+
+    const { headers = {}, accessToken = '', useSession = false, body, ...rest } = options;
+    const session = useSession ? await getValidSession() : null;
+    const bearerToken = accessToken || session?.accessToken || supabaseAnonKey;
+
+    return fetch(buildStorageObjectUrl(bucket, path), {
+      ...rest,
+      body,
+      headers: {
+        apikey: supabaseAnonKey,
+        Authorization: `Bearer ${bearerToken}`,
+        ...headers,
+      },
+    });
+  }
+
+  async function uploadStorageObject(bucket, path, file, options = {}) {
+    const session = await getValidSession();
+
+    if (!session?.accessToken) {
+      throw new Error('Sign in before uploading a wish list image.');
+    }
+
+    const response = await storageFetch(bucket, path, {
+      method: 'POST',
+      accessToken: session.accessToken,
+      body: file,
+      headers: {
+        'Content-Type': file?.type || 'application/octet-stream',
+        'Cache-Control': options.cacheControl || '3600',
+        'x-upsert': options.upsert ? 'true' : 'false',
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error(await parseErrorMessage(response));
+    }
+
+    return {
+      path,
+      publicUrl: buildStoragePublicUrl(bucket, path),
+    };
+  }
+
   function getSupabaseStatus() {
     return hasSupabaseConfig
       ? 'Supabase config detected. Ready to connect shared data.'
@@ -423,6 +488,7 @@
     hasSupabaseConfig,
     buildRestUrl,
     buildAuthUrl,
+    buildStoragePublicUrl,
     getStoredSession,
     getValidSession,
     clearSession,
@@ -433,6 +499,8 @@
     sendPasswordResetEmail,
     signOut,
     supabaseFetch,
+    storageFetch,
+    uploadStorageObject,
     updatePassword,
     getSupabaseStatus,
   };

@@ -19,6 +19,7 @@ const {
   signUpWithPassword,
   supabaseFetch,
   updatePassword,
+  uploadStorageObject,
 } = window.YAWL_SUPABASE;
 const facebookGroupUrl = sanitizeUrl(String(window.YAWL_CONFIG.facebookGroupUrl || ''));
 const facebookThreadUrl = sanitizeUrl(String(dashboard.facebookThreadUrl || ''));
@@ -108,6 +109,9 @@ const DEFAULT_EVENT_TIMEZONE = cleanText(window.YAWL_CONFIG.defaultEventTimezone
 const WISHLIST_ITEM_SLOT_COUNT = 20;
 const WISHLIST_OUT_OF_STORE_LIMIT = 10;
 const WISHLIST_TIMEZONE = 'America/New_York';
+const WISHLIST_IMAGE_BUCKET = 'wishlist-images';
+const WISHLIST_IMAGE_MAX_BYTES = 8 * 1024 * 1024;
+const WISHLIST_IMAGE_TYPES = new Set(['image/png', 'image/jpeg']);
 
 const defaultPrivateState = {
   notes: '',
@@ -258,6 +262,12 @@ app.addEventListener('submit', async (event) => {
     return;
   }
 
+  if (event.target.matches('[data-wishlist-comment-form]')) {
+    event.preventDefault();
+    await handleWishlistCommentSubmit(event);
+    return;
+  }
+
   if (event.target.matches('[data-admin-member-link-form]')) {
     event.preventDefault();
     await handleAdminMemberLinkSubmit(event);
@@ -319,9 +329,9 @@ function render() {
 
 function renderHeader() {
   return `
-    summary: cleanText(values.summary) || 'Weekly wish list for the current Sunday reset.',
-    statusNote: cleanText(values.statusNote) || 'Wish list posted for this week.',
-    updateNote: cleanText(values.statusNote) || 'Wish list posted for this week.',
+    <header class="hero">
+      <div>
+        <p class="eyebrow">YAWL Hub</p>
         <h2>${getSectionTitle()}</h2>
       </div>
       <div class="hero__actions">
@@ -455,6 +465,19 @@ function canManageWishlists() {
   return canManageMembers();
 }
 
+function canEditWishlistPost(wishlist) {
+  if (!wishlist) {
+    return false;
+  }
+
+  if (canManageWishlists()) {
+    return true;
+  }
+
+  const linkedMember = getLinkedWishlistMember();
+  return Boolean(linkedMember && cleanText(linkedMember.id) === cleanText(wishlist.memberId));
+}
+
 function hasLinkedWishlistAccess() {
   return Boolean(getLinkedWishlistMember());
 }
@@ -536,7 +559,7 @@ function renderDashboard() {
           </div>
           <span class="tag">${escapeHtml(`${totalWishlists} active`)}</span>
         </div>
-        <p class="panel-lead">Weekly wish lists reset every Sunday ET. Each board supports up to 20 items, with at most 10 marked out of store, plus a quick home link pulled from the member record.</p>
+        <p class="panel-lead">Weekly wish lists reset every Sunday ET. Members can post one PNG or JPEG board image, update that same weekly post, and collect gift comments below it.</p>
         <div class="wish-grid wish-grid--dashboard">
           ${featuredWishlists.length
             ? featuredWishlists.map((wishlist) => renderWishlistPreviewCard(wishlist)).join('')
@@ -604,9 +627,10 @@ function renderWishlists() {
           </div>
           <span class="tag">${escapeHtml(`${wishlists.length} active`)}</span>
         </div>
-        <p class="panel-lead">Use this board like a clean weekly wish list thread. Each post can carry up to ${WISHLIST_ITEM_SLOT_COUNT} items, with no more than ${WISHLIST_OUT_OF_STORE_LIMIT} out-of-store requests, and the home link is pulled automatically from the linked member record.</p>
+        <p class="panel-lead">Use this board like a clean weekly wish list thread. Each member gets one image post for the current Sunday reset, and comments let gifters say when they helped.</p>
       </article>
 
+      ${renderWishlistNotice()}
       ${renderWishlistComposer(editorState)}
 
       <article class="panel panel--directory panel--span-full">
@@ -632,33 +656,31 @@ function renderWishlists() {
 }
 
 function renderWishlistPreviewCard(wishlist) {
-  const previewItems = wishlist.items.filter((item) => item.imageUrl).slice(0, 4);
-
   return `
     <article class="wish-card wish-card--preview">
       <div class="wish-card__media">
-        ${previewItems.length ? renderWishlistPreviewMedia(previewItems, wishlist.memberName) : renderWishlistFallbackMedia(wishlist, 'wish-card__image')}
+        ${renderWishlistBoardMedia(wishlist, 'wish-card__image')}
       </div>
       <div class="wish-card__heading">
         <p class="wish-card__name">${escapeHtml(wishlist.memberName)}</p>
-        <span class="tag">${escapeHtml(`${wishlist.totalItems} items`)}</span>
+        <span class="tag">${escapeHtml(`${wishlist.commentCount} comments`)}</span>
       </div>
       <p>${escapeHtml(wishlist.statusNote || wishlist.summary)}</p>
       <div class="wishlist-counts">
-        ${renderWishlistCountTag(`${wishlist.outOfStoreCount} out of store`, wishlist.outOfStoreCount > 0 ? 'wishlist-count--warning' : '')}
-        ${renderWishlistCountTag(`${wishlist.receivedCount} received`, wishlist.receivedCount > 0 ? 'wishlist-count--success' : '')}
+        ${renderWishlistCountTag(`${wishlist.giftedCommentCount} gifted notes`, wishlist.giftedCommentCount > 0 ? 'wishlist-count--success' : '')}
+        ${renderWishlistCountTag(wishlist.lastUpdatedLabel, '')}
       </div>
     </article>
   `;
 }
 
 function renderWishlistCard(wishlist) {
-  const thanksPeople = [...new Set([...(wishlist.thankYouTo || []), ...wishlist.items.map((item) => item.receivedFrom).filter(Boolean)])];
+  const canEditThisPost = canEditWishlistPost(wishlist);
 
   return `
     <article class="wishlist-card">
-      <div class="wishlist-card__media wishlist-card__media--grid">
-        ${wishlist.items.length ? renderWishlistItemsGrid(wishlist.items, wishlist.memberName) : renderWishlistFallbackMedia(wishlist, 'wishlist-card__image')}
+      <div class="wishlist-card__media">
+        ${renderWishlistBoardMedia(wishlist, 'wishlist-card__image')}
       </div>
       <div class="wishlist-card__body">
         <div class="panel__heading">
@@ -670,28 +692,30 @@ function renderWishlistCard(wishlist) {
         </div>
         <p class="panel-lead">${escapeHtml(wishlist.summary)}</p>
         <div class="wishlist-counts wishlist-counts--board">
-          ${renderWishlistCountTag(`${wishlist.totalItems}/${WISHLIST_ITEM_SLOT_COUNT} items`, '')}
-          ${renderWishlistCountTag(`${wishlist.outOfStoreCount}/${WISHLIST_OUT_OF_STORE_LIMIT} out of store`, wishlist.outOfStoreCount > 0 ? 'wishlist-count--warning' : '')}
-          ${renderWishlistCountTag(`${wishlist.receivedCount} received`, wishlist.receivedCount > 0 ? 'wishlist-count--success' : '')}
+          ${renderWishlistCountTag(`${wishlist.commentCount} comments`, '')}
+          ${renderWishlistCountTag(`${wishlist.giftedCommentCount} gifted notes`, wishlist.giftedCommentCount > 0 ? 'wishlist-count--success' : '')}
+          ${canEditThisPost ? renderWishlistCountTag('You can update this post', 'wishlist-count--success') : ''}
         </div>
         <div class="stack-list">
           <div class="list-row list-row--compact">
             <strong>Status</strong>
             <span>${escapeHtml(wishlist.statusNote)}</span>
           </div>
-          <div class="list-row list-row--compact">
-            <strong>Thanks</strong>
-            <span>${escapeHtml(wishlist.thankYouSummary)}</span>
-          </div>
+          ${wishlist.thankYouSummary
+            ? `
+                <div class="list-row list-row--compact">
+                  <strong>Thanks</strong>
+                  <span>${escapeHtml(wishlist.thankYouSummary)}</span>
+                </div>
+              `
+            : ''}
         </div>
         ${wishlist.thankYouNote ? `<p class="wishlist-note"><strong>Thank-you note:</strong> ${escapeHtml(wishlist.thankYouNote)}</p>` : ''}
-        ${thanksPeople.length
-          ? `<div class="wishlist-thanks">${thanksPeople.map((name) => `<span class="tag tag--role-helper">${escapeHtml(name)}</span>`).join('')}</div>`
-          : ''}
         <div class="button-row">
           ${wishlist.homeLink ? `<a class="hero-button hero-button--secondary" href="${wishlist.homeLink}" target="_blank" rel="noreferrer">Open Home Link</a>` : ''}
           ${wishlist.imageUrl ? `<a class="hero-button hero-button--secondary" href="${wishlist.imageUrl}" target="_blank" rel="noreferrer">Open Board Image</a>` : ''}
         </div>
+        ${renderWishlistComments(wishlist)}
       </div>
     </article>
   `;
@@ -707,7 +731,7 @@ function renderWishlistComposer(editorState) {
             <h3>Sign in to manage this week's board</h3>
           </div>
         </div>
-        <p class="panel-lead">Wish list posting uses your YAWL Hub account. Staff can post for any member, and linked member accounts can manage only their own current-week wish list.</p>
+        <p class="panel-lead">Wish list posting uses your YAWL Hub account so weekly image posts stay tied to the right member. Linked member accounts can manage only their own current-week wish list.</p>
         <div class="button-row">
           <button class="hero-button" type="button" data-section="account">Open Account</button>
         </div>
@@ -734,8 +758,9 @@ function renderWishlistComposer(editorState) {
 
   const form = state.admin.wishlistForm;
   const selectedMember = editorState.selectedMember;
-  const itemSummary = summarizeWishlistItems(form.items);
   const isEditingLiveBoard = Boolean(editorState.currentWishlist?.id);
+  const previewUrl = form.boardImagePreviewUrl || editorState.currentWishlist?.imageUrl || '';
+  const imageName = form.boardImageName || editorState.currentWishlist?.imageName || '';
 
   return `
     <article class="panel panel--span-full">
@@ -746,8 +771,8 @@ function renderWishlistComposer(editorState) {
         </div>
         <span class="tag">${escapeHtml(formatWishlistWeekLabel(getCurrentWishlistWeekStartIso()))}</span>
       </div>
-      <p class="panel-lead">Use item image links the same way you would build a YoWorld.info-style board. Each weekly wish list can carry up to ${WISHLIST_ITEM_SLOT_COUNT} items, with at most ${WISHLIST_OUT_OF_STORE_LIMIT} marked out of store.</p>
-      <form class="admin-form" data-wishlist-form>
+      <p class="panel-lead">Upload a PNG or JPEG of your wish list board. Saving again updates the same weekly post instead of creating a second one.</p>
+      <form class="admin-form wishlist-image-form" data-wishlist-form>
         <div class="form-grid">
           ${canManageWishlists()
             ? `
@@ -759,9 +784,25 @@ function renderWishlistComposer(editorState) {
                 </label>
               `
             : `<input type="hidden" name="member_id" value="${escapeHtml(form.memberId)}" />`}
+          <label class="field-group field-group--wide wishlist-upload-field">
+            <span>Wish List Image</span>
+            <input class="text-input" type="file" name="board_image_file" accept="image/png,image/jpeg" />
+            <small class="field-help">PNG or JPEG, up to ${Math.round(WISHLIST_IMAGE_MAX_BYTES / (1024 * 1024))} MB. Choose a new image here when you want to update the post.</small>
+          </label>
+          <div class="wishlist-image-preview field-group--wide">
+            ${previewUrl
+              ? `<img class="wishlist-image-preview__image" src="${previewUrl}" alt="${escapeHtml(`${selectedMember?.displayName || 'Member'} wish list preview`)}" />`
+              : `
+                  <div class="wishlist-card__placeholder">
+                    <strong>No image selected</strong>
+                    <span>Upload a PNG or JPEG wish list board.</span>
+                  </div>
+                `}
+            ${imageName ? `<span class="field-help">${escapeHtml(imageName)}</span>` : ''}
+          </div>
           <label class="field-group field-group--wide">
             <span>Wish List Summary</span>
-            <textarea name="summary" class="admin-textarea" placeholder="What vibe or item focus does this week's wish list have?">${escapeHtml(form.summary)}</textarea>
+            <textarea name="summary" class="admin-textarea" placeholder="Short note about this week's board.">${escapeHtml(form.summary)}</textarea>
           </label>
           <label class="field-group field-group--wide">
             <span>Status Note</span>
@@ -774,14 +815,10 @@ function renderWishlistComposer(editorState) {
         </div>
         <div class="wishlist-editor-toolbar">
           <div class="wishlist-counts wishlist-counts--board">
-            ${renderWishlistCountTag(`${itemSummary.total}/${WISHLIST_ITEM_SLOT_COUNT} items`, '')}
-            ${renderWishlistCountTag(`${itemSummary.outOfStore}/${WISHLIST_OUT_OF_STORE_LIMIT} out of store`, itemSummary.outOfStore > 0 ? 'wishlist-count--warning' : '')}
-            ${renderWishlistCountTag(`${itemSummary.received} received`, itemSummary.received > 0 ? 'wishlist-count--success' : '')}
+            ${renderWishlistCountTag(isEditingLiveBoard ? 'Updating current-week post' : 'New current-week post', '')}
+            ${previewUrl ? renderWishlistCountTag('Image ready', 'wishlist-count--success') : renderWishlistCountTag('Image required', 'wishlist-count--warning')}
           </div>
           ${selectedMember?.homeLink ? `<a class="hero-button hero-button--secondary" href="${selectedMember.homeLink}" target="_blank" rel="noreferrer">Open ${escapeHtml(selectedMember.displayName)}'s Home</a>` : ''}
-        </div>
-        <div class="wishlist-editor-grid">
-          ${form.items.map((item, index) => renderWishlistItemFieldset(item, index)).join('')}
         </div>
         <div class="button-row admin-form-actions">
           <button class="hero-button" type="submit">${escapeHtml(isEditingLiveBoard ? 'Save This Week\'s Wish List' : 'Post This Week\'s Wish List')}</button>
@@ -793,48 +830,28 @@ function renderWishlistComposer(editorState) {
   `;
 }
 
-function renderWishlistItemFieldset(item, index) {
+function renderWishlistBoardMedia(wishlist, imageClassName) {
+  if (wishlist.imageUrl) {
+    return `<img class="${imageClassName}" src="${wishlist.imageUrl}" alt="${escapeHtml(`${wishlist.memberName} weekly wish list`)}" loading="lazy" />`;
+  }
+
+  const previewItems = wishlist.items.filter((item) => item.imageUrl).slice(0, 4);
+
+  if (previewItems.length) {
+    return renderWishlistPreviewMedia(previewItems, wishlist.memberName);
+  }
+
   return `
-    <section class="wishlist-slot">
-      <div class="wishlist-slot__heading">
-        <strong>Item ${index + 1}</strong>
-        <span class="tag ${item.availabilityStatus === 'out_of_store' ? 'tag--role-event' : 'tag--muted'}">${escapeHtml(formatWishlistAvailabilityLabel(item.availabilityStatus))}</span>
-      </div>
-      <div class="wishlist-slot__grid">
-        <label class="field-group field-group--wide">
-          <span>Item Name</span>
-          <input class="text-input" type="text" name="item_name_${index}" value="${escapeHtml(item.name)}" placeholder="Victorian wall shelf" />
-        </label>
-        <label class="field-group field-group--wide">
-          <span>Item Image URL</span>
-          <input class="text-input" type="url" name="item_image_url_${index}" value="${escapeHtml(item.imageUrl)}" placeholder="Paste the item image URL" />
-        </label>
-        <label class="field-group field-group--wide">
-          <span>Item Source Link</span>
-          <input class="text-input" type="url" name="item_source_url_${index}" value="${escapeHtml(item.sourceUrl)}" placeholder="Optional YoWorld.info item link" />
-        </label>
-        <label class="field-group">
-          <span>Availability</span>
-          <select class="text-input" name="availability_status_${index}">
-            ${renderWishlistAvailabilityOptions(item.availabilityStatus)}
-          </select>
-        </label>
-        <label class="field-group">
-          <span>Received From</span>
-          <input class="text-input" type="text" name="received_from_${index}" value="${escapeHtml(item.receivedFrom)}" placeholder="Optional gifter name" />
-        </label>
-        <label class="field-group field-group--checkbox">
-          <span>Gifted</span>
-          <input type="checkbox" name="is_received_${index}" ${item.isReceived ? 'checked' : ''} />
-        </label>
-      </div>
-    </section>
+    <div class="wishlist-card__placeholder">
+      <strong>${escapeHtml(wishlist.memberName)}</strong>
+      <span>No wish list image yet</span>
+    </div>
   `;
 }
 
 function renderWishlistPreviewMedia(items, memberName) {
   return `
-    <div class="wish-thumb-grid" aria-label="${escapeHtml(`${memberName} wish list item preview`)}">
+    <div class="wish-thumb-grid" aria-label="${escapeHtml(`${memberName} legacy wish list item preview`)}">
       ${items
         .map(
           (item) => `
@@ -844,19 +861,6 @@ function renderWishlistPreviewMedia(items, memberName) {
           `,
         )
         .join('')}
-    </div>
-  `;
-}
-
-function renderWishlistFallbackMedia(wishlist, imageClassName) {
-  if (wishlist.imageUrl) {
-    return `<img class="${imageClassName}" src="${wishlist.imageUrl}" alt="${escapeHtml(`${wishlist.memberName} weekly wish list`)}" loading="lazy" />`;
-  }
-
-  return `
-    <div class="wishlist-card__placeholder">
-      <strong>${escapeHtml(wishlist.memberName)}</strong>
-      <span>${escapeHtml(wishlist.totalItems ? `${wishlist.totalItems} wish list items` : 'No item images yet')}</span>
     </div>
   `;
 }
@@ -894,6 +898,78 @@ function renderWishlistItemCard(item) {
 
 function renderWishlistCountTag(label, className) {
   return `<span class="tag wishlist-count ${className}">${escapeHtml(label)}</span>`;
+}
+
+function renderWishlistNotice() {
+  if (!state.admin.notice || state.activeSection !== 'wishlists') {
+    return '';
+  }
+
+  return `
+    <article class="panel panel--span-full">
+      ${renderAdminNotice()}
+    </article>
+  `;
+}
+
+function renderWishlistComments(wishlist) {
+  const comments = Array.isArray(wishlist.comments) ? wishlist.comments : [];
+  const defaultCommenter = getDefaultWishlistCommenterName();
+
+  return `
+    <section class="wishlist-comments" aria-label="${escapeHtml(`${wishlist.memberName} gift comments`)}">
+      <div class="wishlist-comments__heading">
+        <div>
+          <p class="eyebrow">Gift Comments</p>
+          <h4>Let ${escapeHtml(wishlist.memberName)} know</h4>
+        </div>
+        <span class="tag">${escapeHtml(`${comments.length} total`)}</span>
+      </div>
+      <div class="wishlist-comments__list">
+        ${comments.length
+          ? comments.map((comment) => renderWishlistComment(comment)).join('')
+          : '<p class="muted">No gift comments yet.</p>'}
+      </div>
+      <form class="wishlist-comment-form" data-wishlist-comment-form>
+        <input type="hidden" name="wishlist_id" value="${escapeHtml(wishlist.id)}" />
+        <div class="form-grid form-grid--comment">
+          <label class="field-group">
+            <span>Your Name</span>
+            <input class="text-input" type="text" name="commenter_name" value="${escapeHtml(defaultCommenter)}" placeholder="Your group name" required />
+          </label>
+          <label class="field-group field-group--checkbox wishlist-comment-gifted">
+            <span>I gifted</span>
+            <input type="checkbox" name="did_gift" checked />
+          </label>
+          <label class="field-group field-group--wide">
+            <span>Comment</span>
+            <textarea name="comment_text" class="admin-textarea wishlist-comment-textarea" placeholder="Optional note, item gifted, or porch update."></textarea>
+          </label>
+        </div>
+        <div class="button-row">
+          <button class="hero-button hero-button--secondary" type="submit">Post Gift Comment</button>
+        </div>
+      </form>
+    </section>
+  `;
+}
+
+function renderWishlistComment(comment) {
+  return `
+    <article class="wishlist-comment">
+      <div class="wishlist-comment__meta">
+        <strong>${escapeHtml(comment.commenterName)}</strong>
+        <span>${escapeHtml(comment.createdLabel)}</span>
+      </div>
+      ${comment.didGift ? '<span class="tag wishlist-count--success">Gifted</span>' : ''}
+      ${comment.commentText ? `<p>${escapeHtml(comment.commentText)}</p>` : ''}
+    </article>
+  `;
+}
+
+function getDefaultWishlistCommenterName() {
+  const linkedMember = getLinkedWishlistMember();
+  return cleanText(linkedMember?.displayName || state.admin.staffProfile?.displayName || '');
 }
 
 function renderWishlistMemberOptions(members, selectedMemberId) {
@@ -2082,6 +2158,7 @@ function ensureWishlistEditorState() {
 function loadWishlistFormForMember(memberId) {
   const normalizedMemberId = cleanText(memberId);
   const currentWishlist = getCurrentWeekWishlistForMember(normalizedMemberId);
+  revokeWishlistPreviewUrl(state.admin.wishlistForm.boardImagePreviewUrl);
   state.admin.wishlistForm = createEmptyWishlistForm(currentWishlist, normalizedMemberId);
 }
 
@@ -2394,6 +2471,11 @@ function createEmptyWishlistForm(wishlist = null, memberId = '') {
 
   return {
     memberId: cleanText(memberId || wishlist?.memberId),
+    boardImageFile: null,
+    boardImagePreviewUrl: '',
+    boardImageName: cleanText(wishlist?.imageName),
+    boardImagePath: cleanText(wishlist?.imagePath),
+    boardImageMimeType: cleanText(wishlist?.imageMimeType),
     summary: cleanText(wishlist?.summary),
     statusNote: cleanText(wishlist?.statusNote || wishlist?.updateNote),
     thankYouNote: cleanText(wishlist?.thankYouNote),
@@ -2728,6 +2810,7 @@ function resetWishlistEditor() {
   const fallbackMember = getWishlistEditorMembers()[0] || null;
   const fallbackMemberId = cleanText(fallbackMember?.id);
 
+  revokeWishlistPreviewUrl(state.admin.wishlistForm.boardImagePreviewUrl);
   state.admin.wishlistForm = createEmptyWishlistForm(getCurrentWeekWishlistForMember(fallbackMemberId), fallbackMemberId);
   setAdminNotice('Wish list form reset.', 'muted');
 }
@@ -2791,6 +2874,12 @@ function syncWishlistDraftField(target) {
     return;
   }
 
+  if (target.name === 'board_image_file') {
+    handleWishlistImageSelection(target);
+    render();
+    return;
+  }
+
   const itemMatch = target.name.match(/^(item_name|item_image_url|item_source_url|availability_status|received_from|is_received)_(\d+)$/);
 
   if (itemMatch) {
@@ -2839,6 +2928,69 @@ function syncWishlistDraftField(target) {
   }
 
   syncAdminDraftState('wishlistForm', ADMIN_WISHLIST_FIELD_MAP, target);
+}
+
+function handleWishlistImageSelection(target) {
+  const file = target instanceof HTMLInputElement && target.files ? target.files[0] : null;
+
+  revokeWishlistPreviewUrl(state.admin.wishlistForm.boardImagePreviewUrl);
+
+  if (!file) {
+    state.admin.wishlistForm = {
+      ...state.admin.wishlistForm,
+      boardImageFile: null,
+      boardImagePreviewUrl: '',
+      boardImageName: '',
+    };
+    return;
+  }
+
+  try {
+    validateWishlistImageFile(file);
+  } catch (error) {
+    state.admin.wishlistForm = {
+      ...state.admin.wishlistForm,
+      boardImageFile: null,
+      boardImagePreviewUrl: '',
+      boardImageName: '',
+    };
+    setAdminNotice(error instanceof Error ? error.message : 'Choose a PNG or JPEG image.', 'error');
+    return;
+  }
+
+  state.admin.wishlistForm = {
+    ...state.admin.wishlistForm,
+    boardImageFile: file,
+    boardImagePreviewUrl: URL.createObjectURL(file),
+    boardImageName: file.name || 'wishlist-image',
+  };
+  setAdminNotice(`${file.name || 'Image'} is ready to upload.`, 'success');
+}
+
+function validateWishlistImageFile(file) {
+  if (!file) {
+    throw new Error('Choose a PNG or JPEG wish list image before saving.');
+  }
+
+  if (!WISHLIST_IMAGE_TYPES.has(file.type)) {
+    throw new Error('Wish list uploads must be PNG or JPEG images.');
+  }
+
+  if (file.size > WISHLIST_IMAGE_MAX_BYTES) {
+    throw new Error(`Wish list images must be ${Math.round(WISHLIST_IMAGE_MAX_BYTES / (1024 * 1024))} MB or smaller.`);
+  }
+}
+
+function revokeWishlistPreviewUrl(url) {
+  if (!url || !String(url).startsWith('blob:')) {
+    return;
+  }
+
+  try {
+    URL.revokeObjectURL(url);
+  } catch {
+    // Ignore stale object URLs.
+  }
 }
 
 async function handleAdminMemberSubmit(event) {
@@ -2987,12 +3139,24 @@ async function handleWishlistSubmit(event) {
     return;
   }
 
+  const currentWishlist = getCurrentWeekWishlistForMember(targetMember.id);
+  const selectedImageFile = state.admin.wishlistForm.boardImageFile;
+
+  if (!selectedImageFile && !currentWishlist?.imageUrl) {
+    setAdminNotice('Choose a PNG or JPEG wish list image before saving.', 'error');
+    render();
+    return;
+  }
+
   state.admin.isBusy = true;
-  setAdminNotice('Saving this week\'s wish list...', 'muted');
+  setAdminNotice(selectedImageFile ? 'Uploading wish list image...' : 'Saving this week\'s wish list...', 'muted');
   render();
 
   try {
-    const payload = buildWishlistPostPayload(formData, targetMember);
+    const imageUpload = selectedImageFile
+      ? await uploadWishlistImageFile(selectedImageFile, targetMember, getCurrentWishlistWeekStartIso())
+      : null;
+    const payload = buildWishlistPostPayload(formData, targetMember, imageUpload, currentWishlist);
     const response = await supabaseFetch('wishlist_posts', {
       method: 'POST',
       query: new URLSearchParams({ on_conflict: 'member_id,week_start_date' }).toString(),
@@ -3015,6 +3179,8 @@ async function handleWishlistSubmit(event) {
       throw new Error('Supabase did not return the saved wish list id.');
     }
 
+    // The image-post flow replaces the older structured item editor. Clearing old
+    // item rows prevents legacy counts from lingering on updated posts.
     const deleteResponse = await supabaseFetch('wishlist_items', {
       method: 'DELETE',
       query: new URLSearchParams({ wishlist_id: `eq.${wishlistId}` }).toString(),
@@ -3025,30 +3191,69 @@ async function handleWishlistSubmit(event) {
       throw new Error(await getSupabaseErrorMessage(deleteResponse, 'wishlist-write'));
     }
 
-    const itemPayload = buildWishlistItemPayloads(formData, wishlistId);
-
-    if (itemPayload.length) {
-      const itemResponse = await supabaseFetch('wishlist_items', {
-        method: 'POST',
-        useSession: true,
-        headers: {
-          Prefer: 'return=representation',
-        },
-        body: itemPayload,
-      });
-
-      if (!itemResponse.ok) {
-        throw new Error(await getSupabaseErrorMessage(itemResponse, 'wishlist-write'));
-      }
-    }
-
     await loadLiveWishlists();
     loadWishlistFormForMember(targetMember.id);
-    setAdminNotice(`${targetMember.displayName} now has an active wish list for this week.`, 'success');
+    setAdminNotice(`${targetMember.displayName} now has an updated wish list image for this week.`, 'success');
   } catch (error) {
     setAdminNotice(error instanceof Error ? error.message : 'Could not save this wish list.', 'error');
   } finally {
     state.admin.isBusy = false;
+    render();
+  }
+}
+
+async function handleWishlistCommentSubmit(event) {
+  const formData = new FormData(event.target);
+  const wishlistId = cleanText(formData.get('wishlist_id'));
+  const commenterName = cleanText(formData.get('commenter_name'));
+  const commentText = cleanText(formData.get('comment_text'));
+  const didGift = formData.get('did_gift') !== null;
+
+  if (!wishlistId) {
+    setAdminNotice('That wish list post could not be found.', 'error');
+    render();
+    return;
+  }
+
+  if (!commenterName) {
+    setAdminNotice('Add your name before posting a gift comment.', 'error');
+    render();
+    return;
+  }
+
+  if (!didGift && !commentText) {
+    setAdminNotice('Add a comment or check "I gifted" before posting.', 'error');
+    render();
+    return;
+  }
+
+  setAdminNotice('Posting gift comment...', 'muted');
+  render();
+
+  try {
+    const response = await supabaseFetch('wishlist_comments', {
+      method: 'POST',
+      useSession: Boolean(state.admin.session),
+      headers: {
+        Prefer: 'return=representation',
+      },
+      body: {
+        wishlist_id: wishlistId,
+        commenter_name: commenterName,
+        comment_text: normalizeNullableText(commentText),
+        did_gift: didGift,
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error(await getSupabaseErrorMessage(response, 'wishlist-comments'));
+    }
+
+    await loadLiveWishlists();
+    setAdminNotice('Gift comment posted.', 'success');
+  } catch (error) {
+    setAdminNotice(error instanceof Error ? error.message : 'Could not post that gift comment.', 'error');
+  } finally {
     render();
   }
 }
@@ -3303,10 +3508,50 @@ function buildEventPayload(formData) {
   };
 }
 
-function buildWishlistPostPayload(formData, member) {
+async function uploadWishlistImageFile(file, member, weekStartDate) {
+  validateWishlistImageFile(file);
+
+  if (typeof uploadStorageObject !== 'function') {
+    throw new Error('Storage uploads are not available. Reload the app and try again.');
+  }
+
+  const objectPath = buildWishlistImageStoragePath(member.id, weekStartDate, file);
+  const upload = await uploadStorageObject(WISHLIST_IMAGE_BUCKET, objectPath, file, {
+    cacheControl: '3600',
+  });
+
+  return {
+    path: upload.path,
+    publicUrl: upload.publicUrl,
+    mimeType: file.type,
+    name: file.name || 'wishlist-image',
+  };
+}
+
+function buildWishlistImageStoragePath(memberId, weekStartDate, file) {
+  const extension = file.type === 'image/png' ? 'png' : 'jpg';
+  const cleanBaseName = cleanText(file.name)
+    .replace(/\.[^.]+$/, '')
+    .replace(/[^a-z0-9]+/gi, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 44) || 'wishlist';
+  const timestamp = new Date().toISOString().replace(/[^0-9]/g, '').slice(0, 14);
+
+  return `${cleanText(memberId)}/${cleanText(weekStartDate)}/${timestamp}-${cleanBaseName}.${extension}`;
+}
+
+function buildWishlistPostPayload(formData, member, imageUpload = null, currentWishlist = null) {
   const summary = cleanText(formData.get('summary'));
   const statusNote = cleanText(formData.get('status_note'));
   const thankYouNote = cleanText(formData.get('thank_you_note'));
+  const imageUrl = cleanText(imageUpload?.publicUrl || currentWishlist?.imageUrl);
+  const imagePath = cleanText(imageUpload?.path || currentWishlist?.imagePath);
+  const imageMimeType = cleanText(imageUpload?.mimeType || currentWishlist?.imageMimeType);
+  const imageName = cleanText(imageUpload?.name || currentWishlist?.imageName);
+
+  if (!imageUrl) {
+    throw new Error('Choose a PNG or JPEG wish list image before saving.');
+  }
 
   return {
     member_id: member.id,
@@ -3317,6 +3562,10 @@ function buildWishlistPostPayload(formData, member) {
     summary: summary || 'Weekly wish list for the current Sunday reset.',
     status_note: statusNote || 'Wish list posted for this week.',
     thank_you_note: normalizeNullableText(thankYouNote),
+    board_image_url: imageUrl,
+    board_image_path: normalizeNullableText(imagePath),
+    board_image_mime_type: normalizeNullableText(imageMimeType),
+    board_image_name: normalizeNullableText(imageName),
     is_active: true,
   };
 }
@@ -3485,7 +3734,7 @@ async function loadLiveWishlists() {
   try {
     const postsQuery = new URLSearchParams({
       select:
-        'id,member_id,week_start_date,member_name_snapshot,member_in_game_name_snapshot,house_key_snapshot,summary,status_note,thank_you_note,is_active,created_at,updated_at',
+        'id,member_id,week_start_date,member_name_snapshot,member_in_game_name_snapshot,house_key_snapshot,summary,status_note,thank_you_note,board_image_url,board_image_path,board_image_mime_type,board_image_name,is_active,created_at,updated_at',
       week_start_date: `eq.${getCurrentWishlistWeekStartIso()}`,
       is_active: 'eq.true',
       order: 'updated_at.desc,member_name_snapshot.asc',
@@ -3502,6 +3751,7 @@ async function loadLiveWishlists() {
     const wishlistRows = await postsResponse.json();
     const normalizedPosts = Array.isArray(wishlistRows) ? wishlistRows : [];
     let itemRows = [];
+    let commentRows = [];
 
     if (normalizedPosts.length) {
       const wishlistIds = normalizedPosts
@@ -3526,10 +3776,28 @@ async function loadLiveWishlists() {
 
         const liveItems = await itemsResponse.json();
         itemRows = Array.isArray(liveItems) ? liveItems : [];
+
+        const commentsQuery = new URLSearchParams({
+          select: 'id,wishlist_id,commenter_name,comment_text,did_gift,created_at',
+          wishlist_id: `in.(${wishlistIds})`,
+          is_hidden: 'eq.false',
+          order: 'created_at.asc',
+        }).toString();
+        const commentsResponse = await supabaseFetch('wishlist_comments', {
+          query: commentsQuery,
+          method: 'GET',
+        });
+
+        if (!commentsResponse.ok) {
+          throw new Error(await getSupabaseErrorMessage(commentsResponse, 'wishlist-comments'));
+        }
+
+        const liveComments = await commentsResponse.json();
+        commentRows = Array.isArray(liveComments) ? liveComments : [];
       }
     }
 
-    state.wishlists = normalizeSupabaseWishlists(normalizedPosts, itemRows);
+    state.wishlists = normalizeSupabaseWishlists(normalizedPosts, itemRows, commentRows);
     state.wishlistSource = 'live';
     state.wishlistSourceMessage = `Loaded ${state.wishlists.length} active wish lists for this week.`;
   } catch (error) {
@@ -3568,6 +3836,10 @@ async function getSupabaseErrorMessage(response, context = 'read') {
       return 'This signed-in account does not have permission to edit wish lists yet.';
     }
 
+    if (context === 'wishlist-comments') {
+      return 'Gift comments are not available yet. Run supabase/13_wishlist_image_uploads_and_comments.sql when you are ready for comments.';
+    }
+
     if (context === 'member-link') {
       return 'This signed-in account does not have permission to link member logins yet.';
     }
@@ -3584,8 +3856,12 @@ async function getSupabaseErrorMessage(response, context = 'read') {
       return 'The events table is not available yet. Run supabase/08_events_calendar.sql.';
     }
 
+    if (context === 'wishlist-comments') {
+      return 'The gift comments table is not available yet. Run supabase/13_wishlist_image_uploads_and_comments.sql.';
+    }
+
     if (context === 'wishlists' || context === 'wishlist-write' || context === 'member-link') {
-      return 'The weekly wish list tables are not available yet. Run supabase/11_weekly_wishlists.sql.';
+      return 'The weekly wish list tables are not available yet. Run supabase/11_weekly_wishlists.sql, then supabase/13_wishlist_image_uploads_and_comments.sql.';
     }
 
     return 'The members table is not available yet. Run the schema SQL and confirm the table exists in Supabase.';
@@ -3611,6 +3887,15 @@ function normalizeMockWishlist(wishlist, index, memberDirectory = []) {
   const wishlistId = cleanText(wishlist.id) || `wishlist-${index + 1}`;
   const memberName = cleanText(wishlist.memberName || wishlist.member || `Wishlist ${index + 1}`);
   const matchedMember = findMemberByName(memberName, memberDirectory);
+  const thankYouComments = Array.isArray(wishlist.thankYouTo)
+    ? wishlist.thankYouTo.map((name, commentIndex) => ({
+        id: `${wishlistId}-thanks-${commentIndex + 1}`,
+        commenterName: cleanText(name),
+        commentText: 'Gifted from this wish list.',
+        didGift: true,
+        createdAt: wishlist.updatedAt || '',
+      }))
+    : [];
 
   return buildWishlistModel(
     {
@@ -3621,6 +3906,8 @@ function normalizeMockWishlist(wishlist, index, memberDirectory = []) {
       houseKey: cleanText(wishlist.houseKey || matchedMember?.houseKey),
       homeLink: sanitizeUrl(cleanText(wishlist.homeLink || matchedMember?.homeLink)),
       imageUrl: buildAssetUrl(wishlist.imagePath || wishlist.imageUrl),
+      imagePath: cleanText(wishlist.imagePath),
+      imageName: cleanText(wishlist.imageName),
       weekStartDate: cleanText(wishlist.weekStartDate) || getCurrentWishlistWeekStartIso(),
       weekLabel: cleanText(wishlist.weekLabel),
       summary: cleanText(wishlist.summary),
@@ -3632,6 +3919,7 @@ function normalizeMockWishlist(wishlist, index, memberDirectory = []) {
       lastUpdatedLabel: cleanText(wishlist.lastUpdatedLabel),
       isActive: wishlist.isActive !== false,
       items: normalizeWishlistItems(wishlist.items, wishlistId),
+      comments: normalizeWishlistComments(wishlist.comments || thankYouComments, wishlistId),
       updatedAt: cleanText(wishlist.updatedAt),
       createdAt: cleanText(wishlist.createdAt),
     },
@@ -3710,8 +3998,9 @@ function normalizeSupabaseMembers(rows) {
   return rows.map((row, index) => normalizeSupabaseMember(row, index));
 }
 
-function normalizeSupabaseWishlists(rows, itemRows) {
+function normalizeSupabaseWishlists(rows, itemRows, commentRows = []) {
   const itemsByWishlistId = new Map();
+  const commentsByWishlistId = new Map();
 
   itemRows.forEach((row) => {
     const wishlistId = cleanText(row.wishlist_id);
@@ -3725,14 +4014,31 @@ function normalizeSupabaseWishlists(rows, itemRows) {
     itemsByWishlistId.set(wishlistId, currentItems);
   });
 
-  return rows.map((row, index) => normalizeSupabaseWishlist(row, index, itemsByWishlistId.get(cleanText(row.id)) || []));
+  commentRows.forEach((row) => {
+    const wishlistId = cleanText(row.wishlist_id);
+
+    if (!wishlistId) {
+      return;
+    }
+
+    const currentComments = commentsByWishlistId.get(wishlistId) || [];
+    currentComments.push(row);
+    commentsByWishlistId.set(wishlistId, currentComments);
+  });
+
+  return rows.map((row, index) => normalizeSupabaseWishlist(
+    row,
+    index,
+    itemsByWishlistId.get(cleanText(row.id)) || [],
+    commentsByWishlistId.get(cleanText(row.id)) || [],
+  ));
 }
 
 function normalizeSupabaseEvents(rows) {
   return rows.map((row, index) => normalizeSupabaseEvent(row, index));
 }
 
-function normalizeSupabaseWishlist(row, index, itemRows) {
+function normalizeSupabaseWishlist(row, index, itemRows, commentRows = []) {
   const fallbackMember = findMemberById(row.member_id);
 
   return buildWishlistModel(
@@ -3743,12 +4049,17 @@ function normalizeSupabaseWishlist(row, index, itemRows) {
       inGameName: cleanText(row.member_in_game_name_snapshot || fallbackMember?.inGameName),
       houseKey: cleanText(row.house_key_snapshot || fallbackMember?.houseKey),
       homeLink: buildHomeLink(cleanText(row.house_key_snapshot || fallbackMember?.houseKey)),
+      imageUrl: cleanText(row.board_image_url),
+      imagePath: cleanText(row.board_image_path),
+      imageMimeType: cleanText(row.board_image_mime_type),
+      imageName: cleanText(row.board_image_name),
       weekStartDate: cleanText(row.week_start_date),
       summary: cleanText(row.summary),
       statusNote: cleanText(row.status_note),
       thankYouNote: cleanText(row.thank_you_note),
       isActive: row.is_active !== false,
       items: normalizeWishlistItems(itemRows, cleanText(row.id) || `wishlist-live-${index + 1}`),
+      comments: normalizeWishlistComments(commentRows, cleanText(row.id) || `wishlist-live-${index + 1}`),
       updatedAt: cleanText(row.updated_at),
       createdAt: cleanText(row.created_at),
     },
@@ -4107,21 +4418,51 @@ function normalizeWishlistItem(item, index, parentId = '') {
   };
 }
 
+function normalizeWishlistComments(comments, parentId = '') {
+  return Array.isArray(comments)
+    ? comments
+        .map((comment, index) => normalizeWishlistComment(comment, index, parentId))
+        .filter((comment) => Boolean(comment.commenterName && (comment.commentText || comment.didGift)))
+        .sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.sortOrder - right.sortOrder)
+    : [];
+}
+
+function normalizeWishlistComment(comment, index, parentId = '') {
+  const createdAt = cleanText(comment?.created_at || comment?.createdAt);
+
+  return {
+    id: cleanText(comment?.id) || `${parentId || 'wishlist'}-comment-${index + 1}`,
+    commenterName: cleanText(comment?.commenter_name || comment?.commenterName) || 'Someone',
+    commentText: cleanText(comment?.comment_text || comment?.commentText),
+    didGift: Boolean(comment?.did_gift ?? comment?.didGift ?? true),
+    createdAt,
+    createdLabel: formatWishlistCommentCreatedLabel(createdAt),
+    sortOrder: index,
+  };
+}
+
 function buildWishlistModel(values, index) {
   const items = normalizeWishlistItems(values.items, values.id);
+  const comments = normalizeWishlistComments(values.comments, values.id);
   const thankYouTo = Array.isArray(values.thankYouTo)
     ? [...new Set(values.thankYouTo.map((name) => cleanText(name)).filter(Boolean))]
     : [];
+  const giftCommenters = comments
+    .filter((comment) => comment.didGift)
+    .map((comment) => comment.commenterName)
+    .filter(Boolean);
+  const thanksPeople = [...new Set([...thankYouTo, ...items.map((item) => item.receivedFrom).filter(Boolean), ...giftCommenters])];
   const weekStartDate = cleanText(values.weekStartDate) || getCurrentWishlistWeekStartIso();
   const homeLink = sanitizeUrl(cleanText(values.homeLink)) || buildHomeLink(values.houseKey);
   const totalItems = items.length;
   const outOfStoreCount = items.filter((item) => item.availabilityStatus === 'out_of_store').length;
   const receivedCount = items.filter((item) => item.isReceived).length;
-  const thankYouSummary = thankYouTo.length
-    ? `Thanked ${thankYouTo.length} ${thankYouTo.length === 1 ? 'gifter' : 'gifters'}`
+  const giftedCommentCount = comments.filter((comment) => comment.didGift).length;
+  const thankYouSummary = thanksPeople.length
+    ? `${thanksPeople.length} ${thanksPeople.length === 1 ? 'gifter has' : 'gifters have'} checked in`
     : cleanText(values.thankYouNote)
       ? 'Public thank-you note posted'
-      : 'No thank-you notes yet';
+      : '';
 
   return {
     id: cleanText(values.id) || `wishlist-${index + 1}`,
@@ -4130,7 +4471,10 @@ function buildWishlistModel(values, index) {
     inGameName: cleanText(values.inGameName),
     houseKey: cleanText(values.houseKey),
     homeLink,
-    imageUrl: buildAssetUrl(values.imageUrl),
+    imageUrl: buildAssetUrl(values.imageUrl || values.boardImageUrl),
+    imagePath: cleanText(values.imagePath || values.boardImagePath),
+    imageName: cleanText(values.imageName || values.boardImageName),
+    imageMimeType: cleanText(values.imageMimeType || values.boardImageMimeType),
     weekStartDate,
     weekLabel: cleanText(values.weekLabel) || formatWishlistWeekLabel(weekStartDate),
     summary: cleanText(values.summary) || 'Weekly wishlist for the current Sunday reset.',
@@ -4144,6 +4488,9 @@ function buildWishlistModel(values, index) {
     createdAt: cleanText(values.createdAt),
     isActive: values.isActive !== false,
     items,
+    comments,
+    commentCount: comments.length,
+    giftedCommentCount,
     totalItems,
     outOfStoreCount,
     receivedCount,
@@ -4235,6 +4582,27 @@ function formatWishlistLastUpdatedLabel(value) {
   }
 
   return `Updated ${parsedDate.toLocaleString('en-US', { month: 'short', day: 'numeric' })}`;
+}
+
+function formatWishlistCommentCreatedLabel(value) {
+  const normalizedValue = cleanText(value);
+
+  if (!normalizedValue) {
+    return 'Just now';
+  }
+
+  const parsedDate = new Date(normalizedValue);
+
+  if (Number.isNaN(parsedDate.getTime())) {
+    return 'Just now';
+  }
+
+  return parsedDate.toLocaleString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  });
 }
 
 function normalizeEventCount(value) {
