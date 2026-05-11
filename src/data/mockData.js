@@ -224,7 +224,8 @@ window.YAWL_DATA = {
     'Run 07_admin_editor_auth_policies.sql so signed-in staff can read their profile and edit allowed member roles.',
     'Run 08_events_calendar.sql to create the shared event calendar and unlock live event reads and writes.',
     'Run 10_event_type_customization.sql if your Supabase project already used the older event-type constraint and you want custom event types.',
-    'Use the Account tab to create or sign in to the matching Supabase Auth account before editing members.',
+    'Run 14_invite_code_account_claims.sql to switch member access from email links to invite-code claiming plus auth user ids.',
+    'Use the Account tab to create or sign in to the matching Supabase Auth account before editing members or testing invite claims.',
     'Keep private notes and gifted or visited tracking local-only.',
   ],
 };

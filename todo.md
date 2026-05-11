@@ -90,6 +90,9 @@ Last updated: 2026-05-10
 - [ ] Confirm final app name and branding for YAWL Hub.
 - [x] Choose backend: Supabase, Airtable, or Google Sheets.
 - [x] Choose access model: admin-created accounts, invite links, password gate, or email login.
+- Current access direction: admin-issued invite code plus self-service Supabase email/password signup.
+- Password direction: users create and reset their own passwords through Supabase Auth.
+- Implementation direction: migrate member ownership from email matching to `auth.uid()` linking, with invite-code claiming tied to a signed-in user after account creation.
 - [x] Decide whether members can edit their own profile data in v1 or if admins control all shared updates.
 - [x] Decide how wishlist images are added: upload files, paste image URLs, or both.
 - [ ] Decide whether giveaway claims can be reversed by members or only by admins.
@@ -230,3 +233,4 @@ Last updated: 2026-05-10
 - Live Supabase reads are wired for members, events, and weekly wishlists.
 - Giveaways and weekly highlights still rely on local/mock data.
 - The Members page now includes search, role filtering, and a home-link-only filter for faster gifting routes.
+- Auth and self-service ownership now support invite-code claiming after self-service email/password signup, backed by `auth.uid()` ownership with a temporary fallback for older email-linked rows.

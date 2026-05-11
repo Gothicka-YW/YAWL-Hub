@@ -97,14 +97,23 @@ const ADMIN_WISHLIST_FIELD_MAP = {
   status_note: 'statusNote',
   thank_you_note: 'thankYouNote',
 };
-const ADMIN_MEMBER_LINK_FIELD_MAP = {
-  linked_email: 'email',
-  linked_member_id: 'memberId',
+const ADMIN_MEMBER_INVITE_FIELD_MAP = {
+  invited_member_id: 'memberId',
+  expires_in_days: 'expiresInDays',
+};
+const MEMBER_INVITE_CLAIM_FIELD_MAP = {
+  invite_code: 'code',
 };
 const ADMIN_PASSWORD_RESET_FIELD_MAP = {
   new_password: 'newPassword',
   confirm_password: 'confirmPassword',
 };
+const INVITE_CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+const INVITE_CODE_GROUP_SIZE = 4;
+const INVITE_CODE_GROUP_COUNT = 4;
+const DEFAULT_MEMBER_INVITE_EXPIRY_DAYS = 14;
+const MAX_MEMBER_INVITE_EXPIRY_DAYS = 30;
+const MIN_MEMBER_INVITE_LENGTH = 10;
 const DEFAULT_EVENT_TIMEZONE = cleanText(window.YAWL_CONFIG.defaultEventTimezone || 'ET') || 'ET';
 const WISHLIST_ITEM_SLOT_COUNT = 20;
 const WISHLIST_OUT_OF_STORE_LIMIT = 10;
@@ -308,9 +317,15 @@ app.addEventListener('submit', async (event) => {
     return;
   }
 
-  if (event.target.matches('[data-admin-member-link-form]')) {
+  if (event.target.matches('[data-admin-member-invite-form]')) {
     event.preventDefault();
-    await handleAdminMemberLinkSubmit(event);
+    await handleAdminMemberInviteSubmit(event);
+    return;
+  }
+
+  if (event.target.matches('[data-member-invite-claim-form]')) {
+    event.preventDefault();
+    await handleMemberInviteClaimSubmit(event);
     return;
   }
 
@@ -489,15 +504,19 @@ function canEditEvent(calendarEvent) {
   }
 
   const linkedMember = getLinkedEventMember();
+  const sessionUserId = getSessionUserId();
   const sessionEmail = cleanText(state.admin.session?.user?.email).toLowerCase();
 
-  if (!linkedMember || !sessionEmail) {
+  if (!linkedMember || (!sessionUserId && !sessionEmail)) {
     return false;
   }
 
   return (
     cleanText(calendarEvent.hostMemberId) === cleanText(linkedMember.id)
-    && cleanText(calendarEvent.createdByEmail).toLowerCase() === sessionEmail
+    && (
+      (sessionUserId && cleanText(calendarEvent.createdByUserId) === sessionUserId)
+      || (sessionEmail && cleanText(calendarEvent.createdByEmail).toLowerCase() === sessionEmail)
+    )
   );
 }
 
@@ -771,7 +790,7 @@ function renderWishlistComposer(editorState) {
             <h3>Sign in to manage this week's board</h3>
           </div>
         </div>
-        <p class="panel-lead">Wish list posting uses your YAWL Hub account so weekly image posts stay tied to the right member. Linked member accounts can manage only their own current-week wish list.</p>
+        <p class="panel-lead">Wish list posting uses your YAWL Hub account so weekly image posts stay tied to the right member. Claimed member accounts can manage only their own current-week wish list.</p>
         <div class="button-row">
           <button class="hero-button" type="button" data-section="account">Open Account</button>
         </div>
@@ -785,10 +804,10 @@ function renderWishlistComposer(editorState) {
         <div class="panel__heading">
           <div>
             <p class="eyebrow">Post Your Wish List</p>
-            <h3>This login is not linked to a member yet</h3>
+            <h3>Claim your member invite first</h3>
           </div>
         </div>
-        <p class="panel-lead">An admin needs to link this email to a member record before the app can auto-pull your home link and save your weekly wish list safely.</p>
+        <p class="panel-lead">Ask an admin for your invite code, then open Account to claim your member profile before posting this week's wish list.</p>
         <div class="button-row">
           <button class="hero-button hero-button--secondary" type="button" data-section="account">Open Account</button>
         </div>
@@ -1538,10 +1557,10 @@ function renderEventComposerPanel(currentMembers) {
       <div class="panel__heading">
         <div>
           <p class="eyebrow">Post an Event</p>
-          <h3>Link this login to a member first</h3>
+          <h3>Claim a member invite first</h3>
         </div>
       </div>
-      <p class="panel-lead">An admin needs to connect this account to a member profile before it can post a personal event on the shared calendar.</p>
+      <p class="panel-lead">Ask an admin for your invite code, then claim it in Account before posting a personal event on the shared calendar.</p>
       <div class="button-row">
         <button class="hero-button" type="button" data-section="account">Open Account</button>
       </div>
@@ -1696,6 +1715,7 @@ function renderAccount() {
     <section class="panel-grid panel-grid--admin">
       ${renderAdminSessionPanel()}
       ${state.admin.isRecoveryMode ? renderPasswordRecoveryPanel() : ''}
+      ${!getLinkedWishlistMember() ? renderMemberInviteClaimPanel() : ''}
       ${renderAccountInfoPanel()}
       ${hasAdminToolsAccess() ? renderAdminLaunchPanel() : ''}
     </section>
@@ -1782,7 +1802,7 @@ function renderAdmin() {
     <section class="panel-grid panel-grid--admin">
       ${renderAdminSessionPanel()}
       ${canManageMembers() ? renderAdminEditorPanel() : ''}
-      ${canManageMembers() ? renderAdminMemberLinkPanel(currentMembers) : ''}
+      ${canManageMembers() ? renderAdminMemberInvitePanel(currentMembers) : ''}
       ${canManageEvents() ? renderAdminEventEditorPanel(currentMembers) : ''}
       ${canManageMembers() ? renderAdminMembersPanel(currentMembers) : ''}
       ${canManageEvents() ? renderAdminEventsPanel() : ''}
@@ -1797,7 +1817,7 @@ function renderAdminAuthPanel() {
     <article class="panel panel--announcement">
       <p class="eyebrow">Account Access</p>
       <h3>Create or sign in to your private account</h3>
-      <p class="panel-lead">Passwords stay private. Staff editing only unlocks if the signed-in email also exists in staff_permissions. Use the reset link option if you already have an account but forgot the password.</p>
+      <p class="panel-lead">Passwords stay private. Staff editing only unlocks if the signed-in email also exists in staff_permissions. Members should create their own login here, then claim an invite code after sign-in.</p>
       ${renderAdminNotice()}
       <form class="admin-form" data-admin-auth-form>
         <div class="form-grid">
@@ -1866,7 +1886,7 @@ function renderAdminSessionPanel() {
       ${renderAdminNotice()}
       <div class="permission-badges">
         ${isStaff ? renderPermissionBadges(staffProfile) : '<span class="tag tag--muted">Member account</span>'}
-        ${linkedMember ? `<span class="tag tag--role-helper">Wish list linked: ${escapeHtml(linkedMember.displayName)}</span>` : ''}
+        ${linkedMember ? `<span class="tag tag--role-helper">Member access: ${escapeHtml(linkedMember.displayName)}</span>` : ''}
       </div>
       <div class="button-row admin-form-actions">
         ${hasAdminToolsAccess() ? '<button class="hero-button" type="button" data-section="admin">Open Admin Tools</button>' : ''}
@@ -1888,25 +1908,57 @@ function renderAccountInfoPanel() {
           <h3>${escapeHtml(isSignedIn ? 'What this login does' : 'Private member login')}</h3>
         </div>
       </div>
-      <p class="panel-lead">Members can create their own login without sharing a password with admins. Staff permissions stay separate from normal account creation.</p>
+      <p class="panel-lead">Members create their own email/password login, then claim a private invite code from an admin. Staff permissions stay separate from normal member access.</p>
       <div class="stack-list">
+        <div class="list-row list-row--compact">
+          <strong>Invite claim</strong>
+          <span>Admins send a one-time code that links this login to the correct member profile after sign-in.</span>
+        </div>
         <div class="list-row list-row--compact">
           <strong>Password privacy</strong>
           <span>Admins cannot see member passwords.</span>
         </div>
         <div class="list-row list-row--compact">
           <strong>Password reset</strong>
-          <span>Use Send Reset Link to get a recovery email and choose a new password.</span>
+          <span>Use Send Reset Link to recover your own password through Supabase Auth email recovery.</span>
         </div>
         <div class="list-row list-row--compact">
           <strong>Member login</strong>
-          <span>Create an account for private features and future saved preferences.</span>
+          <span>Create an account for private features, then claim your member invite to unlock self-service posting.</span>
         </div>
         <div class="list-row list-row--compact">
           <strong>Staff editing</strong>
           <span>Only emails in staff_permissions unlock the editor.</span>
         </div>
       </div>
+    </article>
+  `;
+}
+
+function renderMemberInviteClaimPanel() {
+  const form = state.admin.inviteClaimForm;
+
+  return `
+    <article class="panel panel--announcement">
+      <div class="panel__heading">
+        <div>
+          <p class="eyebrow">Claim Member Access</p>
+          <h3>Enter your invite code</h3>
+        </div>
+      </div>
+      <p class="panel-lead">After you create your account, enter the invite code an admin sent you privately. The code links this login to your member profile without staff needing your personal email address in app tables.</p>
+      <form class="admin-form" data-member-invite-claim-form>
+        <div class="form-grid">
+          <label class="field-group field-group--wide">
+            <span>Invite Code</span>
+            <input class="text-input invite-code-input" type="text" name="invite_code" value="${escapeHtml(form.code)}" placeholder="ABCD-EFGH-JKLM-NPQR" autocomplete="one-time-code" required />
+            <small class="field-help">Codes are one-time use. Paste the code exactly as the admin sent it, then claim it once after sign-in.</small>
+          </label>
+        </div>
+        <div class="button-row admin-form-actions">
+          <button class="hero-button" type="submit">Claim Invite Code</button>
+        </div>
+      </form>
     </article>
   `;
 }
@@ -2023,7 +2075,7 @@ function renderAdminEventEditorPanel(currentMembers, options = {}) {
     : (isEditing ? 'Editing live event' : 'Shared calendar');
   const panelLead = canChooseHost
     ? 'Add birthday parties, meet ups, games, special events, or a custom event type here. The event type controls the icon shown next to the event title.'
-    : `Your linked member account can post as ${linkedMember?.displayName || 'your member profile'} and can edit or deactivate only the events it created.`;
+    : `Your claimed member account can post as ${linkedMember?.displayName || 'your member profile'} and can edit or deactivate only the events it created.`;
 
   return `
     <article class="panel ${isEventsContext ? 'panel--span-full' : ''}">
@@ -2073,7 +2125,7 @@ function renderAdminEventEditorPanel(currentMembers, options = {}) {
           <label class="field-group">
             <span>Host</span>
             <input class="text-input" type="text" name="host_name" value="${escapeHtml(form.hostName)}" ${canChooseHost ? 'list="event-host-options" placeholder="Nova June"' : 'readonly'} />
-            <small class="field-help">${escapeHtml(canChooseHost ? 'Use a member name from the directory when possible.' : 'Linked member event posts keep the host locked to your member profile.')}</small>
+            <small class="field-help">${escapeHtml(canChooseHost ? 'Use a member name from the directory when possible.' : 'Claimed member event posts keep the host locked to your member profile.')}</small>
           </label>
           <label class="field-group">
             <span>Location</span>
@@ -2129,39 +2181,53 @@ function renderEventTypeOptions(selectedType) {
     .join('');
 }
 
-function renderAdminMemberLinkPanel(currentMembers) {
-  const form = state.admin.memberLinkForm;
+function renderAdminMemberInvitePanel(currentMembers) {
+  const form = state.admin.memberInviteForm;
+  const generatedInvite = state.admin.generatedInvite;
 
   return `
     <article class="panel">
       <div class="panel__heading">
         <div>
-          <p class="eyebrow">Member Login Link</p>
-          <h3>Connect a login to a member</h3>
+          <p class="eyebrow">Member Invite Codes</p>
+          <h3>Create a claim code for a member</h3>
         </div>
-        <span class="tag">Wish list access</span>
+        <span class="tag">Invite access</span>
       </div>
-      <p class="panel-lead">Link a member's sign-in email to their member row so the Wish Lists tab can auto-fill the right home link and limit that account to its own current-week board.</p>
-      <form class="admin-form" data-admin-member-link-form>
+      <p class="panel-lead">Generate a one-time code for a member, send it privately, and let them sign up with their own email/password before claiming the code in Account.</p>
+      ${generatedInvite ? renderGeneratedInvitePanel(generatedInvite) : ''}
+      <form class="admin-form" data-admin-member-invite-form>
         <div class="form-grid">
           <label class="field-group">
-            <span>Member Email</span>
-            <input class="text-input" type="email" name="linked_email" value="${escapeHtml(form.email)}" placeholder="member@example.com" required />
-          </label>
-          <label class="field-group">
-            <span>Linked Member</span>
-            <select class="text-input" name="linked_member_id" required>
+            <span>Member</span>
+            <select class="text-input" name="invited_member_id" required>
               <option value="">Choose a member</option>
               ${renderWishlistMemberOptions(currentMembers, form.memberId)}
             </select>
           </label>
+          <label class="field-group">
+            <span>Expires In</span>
+            <input class="text-input" type="number" min="1" max="${MAX_MEMBER_INVITE_EXPIRY_DAYS}" name="expires_in_days" value="${escapeHtml(form.expiresInDays)}" required />
+            <small class="field-help">Choose how many days the code should stay valid before expiring automatically.</small>
+          </label>
         </div>
         <div class="button-row admin-form-actions">
-          <button class="hero-button" type="submit">Save Member Link</button>
+          <button class="hero-button" type="submit">Create Invite Code</button>
         </div>
       </form>
-      <p class="muted">After this link is saved, that login can manage only its own weekly wish list unless it also has staff permissions.</p>
+      <p class="muted">Each new code revokes any older unclaimed code for that member. The plain code is shown only once after creation, so send it privately right away.</p>
     </article>
+  `;
+}
+
+function renderGeneratedInvitePanel(invite) {
+  return `
+    <div class="invite-code-card" aria-live="polite">
+      <p class="eyebrow">Latest Invite Code</p>
+      <strong>${escapeHtml(invite.memberName)}</strong>
+      <p class="invite-code-card__value">${escapeHtml(invite.code)}</p>
+      <p class="field-help">Expires ${escapeHtml(formatInviteExpiryLabel(invite.expiresAt))}. Only the hashed code is stored in Supabase, so copy and send this code privately now.</p>
+    </div>
   `;
 }
 
@@ -2604,7 +2670,9 @@ function createDefaultAdminState() {
     noticeTone: 'muted',
     isRecoveryMode: false,
     authForm: createAdminAuthForm(storedSession),
-    memberLinkForm: createMemberLinkForm(storedSession),
+    memberInviteForm: createMemberInviteForm(),
+    inviteClaimForm: createInviteClaimForm(),
+    generatedInvite: null,
     passwordResetForm: createPasswordResetForm(),
     wishlistForm: createEmptyWishlistForm(),
     editingMemberId: '',
@@ -2644,10 +2712,16 @@ function createPasswordResetForm() {
   };
 }
 
-function createMemberLinkForm(session = null, link = null) {
+function createMemberInviteForm(memberId = '') {
   return {
-    email: cleanText(link?.email || session?.user?.email).toLowerCase(),
-    memberId: cleanText(link?.memberId),
+    memberId: cleanText(memberId),
+    expiresInDays: String(DEFAULT_MEMBER_INVITE_EXPIRY_DAYS),
+  };
+}
+
+function createInviteClaimForm() {
+  return {
+    code: '',
   };
 }
 
@@ -2715,7 +2789,7 @@ async function initializeAdminSession(showRefreshMessage = false) {
     ...state.admin.authForm,
     email: state.admin.authForm.email || cleanText(session?.user?.email),
   };
-  state.admin.memberLinkForm = createMemberLinkForm(session, state.admin.memberAccount);
+  state.admin.inviteClaimForm = createInviteClaimForm();
 
   if (state.admin.isRecoveryMode) {
     state.admin.passwordResetForm = createPasswordResetForm();
@@ -2778,7 +2852,40 @@ async function loadStaffProfile() {
 }
 
 async function loadCurrentMemberAccount() {
-  if (!hasSupabaseConfig || !state.admin.session?.user?.email) {
+  if (!hasSupabaseConfig || !state.admin.session) {
+    state.admin.memberAccount = null;
+    return;
+  }
+
+  const sessionUserId = getSessionUserId();
+
+  if (sessionUserId) {
+    const authLinkQuery = new URLSearchParams({
+      select: 'auth_user_id,member_id,created_at',
+      auth_user_id: `eq.${sessionUserId}`,
+    }).toString();
+    const authLinkResponse = await supabaseFetch('member_auth_links', {
+      query: authLinkQuery,
+      method: 'GET',
+      useSession: true,
+    });
+
+    if (authLinkResponse.ok) {
+      const authLinkRows = await authLinkResponse.json();
+      const authLink = Array.isArray(authLinkRows) ? authLinkRows[0] : null;
+
+      if (authLink) {
+        state.admin.memberAccount = {
+          authUserId: cleanText(authLink.auth_user_id || sessionUserId),
+          memberId: cleanText(authLink.member_id),
+          source: 'invite',
+        };
+        return;
+      }
+    }
+  }
+
+  if (!state.admin.session?.user?.email) {
     state.admin.memberAccount = null;
     return;
   }
@@ -2795,7 +2902,6 @@ async function loadCurrentMemberAccount() {
 
   if (!response.ok) {
     state.admin.memberAccount = null;
-    state.admin.memberLinkForm = createMemberLinkForm(state.admin.session);
     return;
   }
 
@@ -2806,9 +2912,9 @@ async function loadCurrentMemberAccount() {
     ? {
         email: cleanText(link.email).toLowerCase(),
         memberId: cleanText(link.member_id),
+        source: 'legacy-email',
       }
     : null;
-  state.admin.memberLinkForm = createMemberLinkForm(state.admin.session, state.admin.memberAccount);
 }
 
 function normalizeStaffProfile(profile) {
@@ -2874,6 +2980,7 @@ async function handleAdminAuthSubmit(event) {
         state.admin.session = result.session;
         state.admin.authForm = createAdminAuthForm(result.session);
         await loadStaffProfile();
+        await loadCurrentMemberAccount();
       } else if (result.needsEmailConfirmation) {
         state.admin.session = null;
         state.admin.authForm = {
@@ -2892,6 +2999,7 @@ async function handleAdminAuthSubmit(event) {
       state.admin.session = await signInWithPassword(email, password);
       state.admin.authForm = createAdminAuthForm(state.admin.session);
       await loadStaffProfile();
+      await loadCurrentMemberAccount();
     }
   } catch (error) {
     setAdminNotice(error instanceof Error ? error.message : 'Account sign-in failed.', 'error');
@@ -2940,6 +3048,7 @@ async function handlePasswordResetSubmit(event) {
     state.admin.isRecoveryMode = false;
     state.admin.passwordResetForm = createPasswordResetForm();
     await loadStaffProfile();
+    await loadCurrentMemberAccount();
     setAdminNotice('Password updated. You are signed in with your new password.', 'success');
   } catch (error) {
     setAdminNotice(error instanceof Error ? error.message : 'Could not update your password.', 'error');
@@ -3038,8 +3147,13 @@ function syncAdminDraftField(target) {
     return;
   }
 
-  if (target.closest('[data-admin-member-link-form]')) {
-    syncAdminDraftState('memberLinkForm', ADMIN_MEMBER_LINK_FIELD_MAP, target);
+  if (target.closest('[data-admin-member-invite-form]')) {
+    syncAdminDraftState('memberInviteForm', ADMIN_MEMBER_INVITE_FIELD_MAP, target);
+    return;
+  }
+
+  if (target.closest('[data-member-invite-claim-form]')) {
+    syncAdminDraftState('inviteClaimForm', MEMBER_INVITE_CLAIM_FIELD_MAP, target);
     return;
   }
 
@@ -3267,10 +3381,6 @@ async function handleAdminEventSubmit(event) {
     const payload = buildEventPayload(new FormData(event.target));
     const wasEditing = Boolean(state.admin.editingEventId);
 
-    if (!wasEditing && !canManageEvents()) {
-      payload.created_by_email = cleanText(state.admin.session?.user?.email).toLowerCase() || null;
-    }
-
     const response = state.admin.editingEventId
       ? await supabaseFetch('events', {
           method: 'PATCH',
@@ -3320,7 +3430,7 @@ async function handleWishlistSubmit(event) {
   const editorState = getWishlistEditorState();
 
   if (!editorState.canEdit) {
-    setAdminNotice('This account is not linked to a member record yet.', 'error');
+    setAdminNotice('This account has not claimed a member invite yet.', 'error');
     render();
     return;
   }
@@ -3456,63 +3566,115 @@ async function handleWishlistCommentSubmit(event) {
   }
 }
 
-async function handleAdminMemberLinkSubmit(event) {
+async function handleAdminMemberInviteSubmit(event) {
   if (!canManageMembers()) {
-    setAdminNotice('This account does not have permission to link member accounts.', 'error');
+    setAdminNotice('This account does not have permission to create member invites.', 'error');
     render();
     return;
   }
 
   const formData = new FormData(event.target);
-  const email = cleanText(formData.get('linked_email')).toLowerCase();
-  const memberId = cleanText(formData.get('linked_member_id'));
+  const memberId = cleanText(formData.get('invited_member_id'));
+  const expiresInDays = normalizeInviteExpiryDays(formData.get('expires_in_days'));
   const targetMember = findMemberById(memberId);
 
-  if (!email) {
-    setAdminNotice('Email is required for member account linking.', 'error');
+  if (!targetMember) {
+    setAdminNotice('Choose a member before generating an invite code.', 'error');
     render();
     return;
   }
 
-  if (!targetMember) {
-    setAdminNotice('Choose a member to link.', 'error');
+  const inviteCode = generateInviteCode();
+
+  state.admin.isBusy = true;
+  setAdminNotice(`Generating an invite code for ${targetMember.displayName}...`, 'muted');
+  render();
+
+  try {
+    const response = await supabaseFetch('rpc/create_member_invite', {
+      method: 'POST',
+      useSession: true,
+      body: {
+        p_member_id: memberId,
+        p_invite_code: inviteCode,
+        p_expires_in_days: expiresInDays,
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error(await getSupabaseErrorMessage(response, 'member-invite-create'));
+    }
+
+    const rows = await response.json();
+    const inviteRow = Array.isArray(rows) ? rows[0] : rows;
+
+    state.admin.memberInviteForm = createMemberInviteForm(memberId);
+    state.admin.generatedInvite = {
+      code: inviteCode,
+      memberId,
+      memberName: targetMember.displayName,
+      expiresAt: cleanText(inviteRow?.expires_at),
+    };
+    setAdminNotice(`Invite code ready for ${targetMember.displayName}. Send it privately now.`, 'success');
+  } catch (error) {
+    state.admin.generatedInvite = null;
+    setAdminNotice(error instanceof Error ? error.message : 'Could not create that invite code.', 'error');
+  } finally {
+    state.admin.isBusy = false;
+    render();
+  }
+}
+
+async function handleMemberInviteClaimSubmit(event) {
+  if (!state.admin.session) {
+    setAdminNotice('Sign in before claiming an invite code.', 'error');
+    render();
+    return;
+  }
+
+  const formData = new FormData(event.target);
+  const inviteCode = cleanText(formData.get('invite_code'));
+
+  if (normalizeInviteCode(inviteCode).length < MIN_MEMBER_INVITE_LENGTH) {
+    setAdminNotice('Enter a valid invite code.', 'error');
     render();
     return;
   }
 
   state.admin.isBusy = true;
-  setAdminNotice(`Linking ${email} to ${targetMember.displayName}...`, 'muted');
+  setAdminNotice('Claiming your member invite...', 'muted');
   render();
 
   try {
-    const response = await supabaseFetch('member_accounts', {
+    const response = await supabaseFetch('rpc/claim_member_invite', {
       method: 'POST',
-      query: new URLSearchParams({ on_conflict: 'email' }).toString(),
       useSession: true,
-      headers: {
-        Prefer: 'resolution=merge-duplicates,return=representation',
-      },
       body: {
-        email,
-        member_id: memberId,
+        p_invite_code: inviteCode,
       },
     });
 
     if (!response.ok) {
-      throw new Error(await getSupabaseErrorMessage(response, 'member-link'));
+      throw new Error(await getSupabaseErrorMessage(response, 'member-invite-claim'));
     }
 
-    if (cleanText(state.admin.session?.user?.email).toLowerCase() === email) {
-      await loadCurrentMemberAccount();
+    await loadCurrentMemberAccount();
+
+    const linkedMember = getLinkedWishlistMember();
+    state.admin.inviteClaimForm = createInviteClaimForm();
+
+    if (linkedMember) {
+      loadWishlistFormForMember(linkedMember.id);
     }
 
-    state.admin.memberLinkForm = createMemberLinkForm(state.admin.session, {
-      email,
-      memberId,
-    });
-    setAdminNotice(`${email} is now linked to ${targetMember.displayName}.`, 'success');
+    setAdminNotice(
+      linkedMember
+        ? `${linkedMember.displayName} is now linked to this login.`
+        : 'This login is now linked to your member profile.',
+      'success',
+    );
   } catch (error) {
-    setAdminNotice(error instanceof Error ? error.message : 'Could not link that member account.', 'error');
+    setAdminNotice(error instanceof Error ? error.message : 'Could not claim that invite code.', 'error');
   } finally {
     state.admin.isBusy = false;
     render();
@@ -3896,7 +4058,7 @@ async function loadLiveEvents() {
 
   try {
     const query = new URLSearchParams({
-      select: 'id,title,event_type,event_date,start_time,end_time,timezone,host_name,host_member_id,location_text,details,yes_count,maybe_count,no_count,is_active,created_by_email',
+      select: 'id,title,event_type,event_date,start_time,end_time,timezone,host_name,host_member_id,location_text,details,yes_count,maybe_count,no_count,is_active,created_by_user_id,created_by_email',
       is_active: 'eq.true',
       order: 'event_date.asc,start_time.asc.nullslast,title.asc',
     }).toString();
@@ -4042,6 +4204,14 @@ async function getSupabaseErrorMessage(response, context = 'read') {
       return 'This signed-in account does not have permission to link member logins yet.';
     }
 
+    if (context === 'member-invite-create') {
+      return 'This signed-in account does not have permission to create member invite codes yet.';
+    }
+
+    if (context === 'member-invite-claim') {
+      return 'This invite code flow is not available yet. Apply the invite-code SQL migration and try again.';
+    }
+
     return 'The members table is still private. Run supabase/02_enable_member_directory_read.sql when you are ready for browser reads.';
   }
 
@@ -4056,6 +4226,10 @@ async function getSupabaseErrorMessage(response, context = 'read') {
 
     if (context === 'wishlist-comments') {
       return 'The gift comments table is not available yet. Run supabase/13_wishlist_image_uploads_and_comments.sql.';
+    }
+
+    if (context === 'member-invite-create' || context === 'member-invite-claim') {
+      return 'The invite-code account claim schema is not available yet. Run supabase/14_invite_code_account_claims.sql.';
     }
 
     if (context === 'wishlists' || context === 'wishlist-write' || context === 'member-link') {
@@ -4151,6 +4325,7 @@ function normalizeMockEvent(calendarEvent, index) {
     whenLabel: cleanText(calendarEvent.when) || formatEventWhenLabel(eventDate, startTime, endTime, timezone),
     hostName: cleanText(calendarEvent.host || calendarEvent.hostName),
     hostMemberId: cleanText(calendarEvent.hostMemberId),
+    createdByUserId: cleanText(calendarEvent.createdByUserId),
     createdByEmail: cleanText(calendarEvent.createdByEmail).toLowerCase(),
     locationText: cleanText(calendarEvent.locationText || calendarEvent.location),
     details: cleanText(calendarEvent.details || calendarEvent.note),
@@ -4286,6 +4461,7 @@ function normalizeSupabaseEvent(row, index) {
     whenLabel: formatEventWhenLabel(eventDate, startTime, endTime, timezone),
     hostName: cleanText(row.host_name),
     hostMemberId: cleanText(row.host_member_id),
+    createdByUserId: cleanText(row.created_by_user_id),
     createdByEmail: cleanText(row.created_by_email).toLowerCase(),
     locationText: cleanText(row.location_text),
     details: cleanText(row.details),
@@ -5039,6 +5215,71 @@ function parseNullableInt(value) {
 
 function cleanText(value) {
   return String(value ?? '').trim();
+}
+
+function getSessionUserId() {
+  return cleanText(state.admin.session?.user?.id);
+}
+
+function normalizeInviteCode(value) {
+  return cleanText(value)
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, '');
+}
+
+function normalizeInviteExpiryDays(value) {
+  const parsed = parseNullableInt(value);
+
+  if (!parsed) {
+    return DEFAULT_MEMBER_INVITE_EXPIRY_DAYS;
+  }
+
+  return Math.min(Math.max(parsed, 1), MAX_MEMBER_INVITE_EXPIRY_DAYS);
+}
+
+function generateInviteCode() {
+  const segmentLength = INVITE_CODE_GROUP_SIZE * INVITE_CODE_GROUP_COUNT;
+  const cryptoObject = window.crypto || window.msCrypto;
+  const randomValues = new Uint32Array(segmentLength);
+
+  if (cryptoObject?.getRandomValues) {
+    cryptoObject.getRandomValues(randomValues);
+  } else {
+    for (let index = 0; index < randomValues.length; index += 1) {
+      randomValues[index] = Math.floor(Math.random() * 0xffffffff);
+    }
+  }
+
+  const characters = Array.from(randomValues, (value) => INVITE_CODE_ALPHABET[value % INVITE_CODE_ALPHABET.length]);
+  const segments = [];
+
+  for (let index = 0; index < characters.length; index += INVITE_CODE_GROUP_SIZE) {
+    segments.push(characters.slice(index, index + INVITE_CODE_GROUP_SIZE).join(''));
+  }
+
+  return segments.join('-');
+}
+
+function formatInviteExpiryLabel(value) {
+  const text = cleanText(value);
+
+  if (!text) {
+    return 'soon';
+  }
+
+  const date = new Date(text);
+
+  if (Number.isNaN(date.getTime())) {
+    return text;
+  }
+
+  return date.toLocaleString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  });
 }
 
 function createClientMemberId(value) {

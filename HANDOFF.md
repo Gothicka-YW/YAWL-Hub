@@ -7,6 +7,8 @@ Last updated: 2026-05-10
 - Repo: `https://github.com/Gothicka-YW/YAWL-Hub.git`
 - Stack: static HTML, CSS, and vanilla JS. No build step.
 - Backend: Supabase.
+- Access direction: admin-issued invite code plus self-service Supabase email/password signup. Admins should not need to collect personal email addresses.
+- Current implementation note: invite-code claim support is now implemented in the app and in `supabase/14_invite_code_account_claims.sql`. Member ownership now resolves through `auth.uid()` with a temporary fallback for older email-linked rows.
 - Local-only data: private notes, gifted status, visited status.
 - Shared live data: member directory in Supabase.
 - Shared event calendar: supported in the app and enabled after `supabase/08_events_calendar.sql` is run. Existing projects that already used the older event-type constraint should also run `supabase/10_event_type_customization.sql`.
@@ -21,10 +23,12 @@ Last updated: 2026-05-10
 - YoWorld name is shown as the confirmation field for gifting.
 - Member roles are supported in the UI: admin, event planner, moderator, helper, member.
 - The Wishlists tab now supports one PNG/JPEG image post per member for the current week, owner-only updates to that same post, public gift comments, and member-home links pulled from the linked member record.
-- Admin Tools now includes a member-email linking form so non-staff accounts can be tied to a member row for self-service wishlist posting.
+- Admin Tools now includes invite-code generation so staff can create one-time member claim codes without asking for personal email addresses.
 - Account section now supports:
   - Supabase email/password sign-in
   - account creation
+  - password reset via Supabase recovery email
+  - invite-code claim after sign-in
   - private member login flow for non-staff accounts
 - Admin Tools is staff-only and supports:
   - add member
@@ -51,6 +55,7 @@ Last updated: 2026-05-10
 - `supabase/11_weekly_wishlists.sql`: creates member account links plus the live weekly wishlist and legacy item tables with RLS.
 - `supabase/12_member_owned_events.sql`: lets linked member accounts post and manage only their own events.
 - `supabase/13_wishlist_image_uploads_and_comments.sql`: adds the wishlist image storage bucket, image-post columns, and public gift comments.
+- `supabase/14_invite_code_account_claims.sql`: adds member invite codes, `auth.uid()` member ownership, and auth-user-based member claim support with legacy email-link fallback.
 
 ## Required Supabase Run Order
 
@@ -68,6 +73,7 @@ If setting up from scratch:
 10. Run `supabase/11_weekly_wishlists.sql`
 11. Run `supabase/12_member_owned_events.sql` if linked members should manage their own events
 12. Run `supabase/13_wishlist_image_uploads_and_comments.sql`
+13. Run `supabase/14_invite_code_account_claims.sql`
 
 ## Sensitive Files Kept Local
 
@@ -82,22 +88,25 @@ They contain real member names, birthdays, and/or house-link data.
 
 ## Immediate Next Step
 
-Apply and test the live weekly wishlist flow against the real Supabase project:
+Apply and test the invite-code member claim flow against the real Supabase project:
 
-1. Confirm `supabase/11_weekly_wishlists.sql` and `supabase/13_wishlist_image_uploads_and_comments.sql` have been run.
+1. Confirm `supabase/14_invite_code_account_claims.sql` has been run after `11`, `12`, and `13`.
 2. Reload the app.
 3. Sign in as a staff account and open Admin Tools.
-4. Link at least one email to a member row.
-5. Open the Wishlists tab and verify:
+4. Generate an invite code for one member and send it privately.
+5. In a separate member account, create or sign in to a Supabase Auth login and claim the invite code in Account.
+6. Open the Wishlists tab and verify:
   - the current-week board loads from Supabase
-  - a linked member can upload a PNG/JPEG wishlist for the current Sunday reset
+  - a claimed member can upload a PNG/JPEG wishlist for the current Sunday reset
   - saving again updates the same post instead of creating a duplicate
   - another normal member cannot update someone else's post
   - people can add gift comments under the post
   - the home link button opens the member's saved house link
+7. Open the Events tab and verify the claimed member can create, edit, and deactivate only their own event posts.
 
 ## Likely Next Improvement
 
+- Remove the temporary legacy email-link fallback once all active member-owned accounts have moved to invite-code claims.
 - Extend private member login features beyond auth, such as saved preferences or private profile settings.
 - Move giveaways and weekly highlights off mock data and into the live backend.
 
@@ -105,4 +114,4 @@ Apply and test the live weekly wishlist flow against the real Supabase project:
 
 Use this prompt in a new chat if needed:
 
-"Continue work on YAWL Hub. The repo already has live Supabase member reads, a shared event calendar, and a live current-week wishlist image/comment system backed by `supabase/11_weekly_wishlists.sql` plus `supabase/13_wishlist_image_uploads_and_comments.sql`. Verify the new wishlist schema is applied, link a member email, and finish testing the self-service wishlist posting flow."
+"Continue work on YAWL Hub. The repo already has live Supabase member reads, a shared event calendar, and a live current-week wishlist image/comment system. `supabase/14_invite_code_account_claims.sql` now adds admin invite codes plus `auth.uid()` member claims with legacy email-link fallback. Verify the invite flow works end to end and finish testing self-service member posting."

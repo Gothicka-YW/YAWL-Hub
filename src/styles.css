@@ -799,6 +799,34 @@ textarea {
   color: var(--muted);
 }
 
+.invite-code-card {
+  display: grid;
+  gap: 0.55rem;
+  margin: 0 0 1rem;
+  padding: 1rem;
+  border: 1px solid rgba(47, 123, 115, 0.2);
+  border-radius: var(--radius-lg);
+  background: rgba(47, 123, 115, 0.08);
+}
+
+.invite-code-card strong {
+  font-size: 1rem;
+}
+
+.invite-code-card__value {
+  margin: 0;
+  font-family: "Courier New", monospace;
+  font-size: 1.15rem;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  color: var(--teal);
+}
+
+.invite-code-input {
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
 .event-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));

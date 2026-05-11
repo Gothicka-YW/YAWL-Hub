@@ -13,10 +13,11 @@ Use these files in order:
 9. Run `07_admin_editor_auth_policies.sql` before using the Account section to sign in and the Admin Tools section to edit members from the app.
 10. Run `08_events_calendar.sql` before using the Events tab or Admin Tools to load and manage the shared event calendar.
 11. If your project already used the earlier event-type constraint, run `10_event_type_customization.sql` to switch to Birthday Party, Meet Up, Game, Special Event, and custom event labels.
-12. Run `11_weekly_wishlists.sql` before using the live Wish Lists tab, wish list editor, or member-to-login linking flow.
+12. Run `11_weekly_wishlists.sql` before using the live Wish Lists tab, wish list editor, or the original member email-link flow.
 13. Run `12_member_owned_events.sql` after `11_weekly_wishlists.sql` if linked members should be able to post events and manage only their own entries.
 14. Run `13_wishlist_image_uploads_and_comments.sql` to add the wishlist image bucket, image-post columns, and gift comments.
-15. Create or sign in to a Supabase Auth account that uses the same email as your `staff_permissions` row.
+15. Run `14_invite_code_account_claims.sql` to switch member ownership to `auth.uid()`, add admin-generated invite codes, and let signed-in users claim their member profile after account creation.
+16. Create or sign in to a Supabase Auth account that uses the same email as your `staff_permissions` row.
 
 Notes:
 
@@ -34,9 +35,10 @@ Notes:
 - `07_admin_editor_auth_policies.sql` lets signed-in staff read their own permissions record and enforces safer role-aware member editing rules.
 - `08_events_calendar.sql` creates the shared event calendar for Birthday Party, Meet Up, Game, Special Event, and custom event labels, with reads for active events and initial write policies.
 - `10_event_type_customization.sql` updates older projects that still use the original event-type constraint so custom event labels can be saved.
-- `11_weekly_wishlists.sql` adds live weekly wish lists, the legacy item limits, and the member-email link table used for self-service wish list posting.
+- `11_weekly_wishlists.sql` adds live weekly wish lists, the legacy item limits, and the original member-email link table used for self-service wish list posting.
 - `12_member_owned_events.sql` extends the events policies so linked members can post events and manage only the events created under their own linked member profile.
 - `13_wishlist_image_uploads_and_comments.sql` adds the public wishlist image bucket, owner-only image post updates, and public gift comments.
+- `14_invite_code_account_claims.sql` adds invite-code claiming, links member ownership to `auth.uid()`, and keeps self-service email/password resets inside Supabase Auth.
 
 ## Supabase CLI Workflow
 
@@ -56,6 +58,7 @@ Apply the existing SQL files from the terminal:
 - Helper script, wish list board setup: `./scripts/apply-supabase-sql.ps1 -Files supabase/11_weekly_wishlists.sql`
 - Helper script, member-owned event setup: `./scripts/apply-supabase-sql.ps1 -Files supabase/12_member_owned_events.sql`
 - Helper script, wish list image/comment setup: `./scripts/apply-supabase-sql.ps1 -Files supabase/13_wishlist_image_uploads_and_comments.sql`
+- Helper script, invite-code account claim setup: `./scripts/apply-supabase-sql.ps1 -Files supabase/14_invite_code_account_claims.sql`
 - Helper script, full ordered set: `./scripts/apply-supabase-sql.ps1 -All`
 - Optional sample event seed: `./scripts/apply-supabase-sql.ps1 -Files supabase/09_seed_sample_event.sql`
 

@@ -31,7 +31,8 @@ $orderedRepoFiles = @(
   'supabase\10_event_type_customization.sql',
   'supabase\11_weekly_wishlists.sql',
   'supabase\12_member_owned_events.sql',
-  'supabase\13_wishlist_image_uploads_and_comments.sql'
+  'supabase\13_wishlist_image_uploads_and_comments.sql',
+  'supabase\14_invite_code_account_claims.sql'
 )
 
 if ($All) {
