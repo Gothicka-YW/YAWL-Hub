@@ -1,6 +1,6 @@
 # YAWL Hub Handoff
 
-Last updated: 2026-05-06
+Last updated: 2026-05-10
 
 ## Current State
 
@@ -17,6 +17,7 @@ Last updated: 2026-05-06
 
 - Live member directory reads are wired into `src/main.js`.
 - Members page uses a Facebook-first row layout.
+- Members page now supports search, role filtering, and a home-link-only view for gifting runs.
 - YoWorld name is shown as the confirmation field for gifting.
 - Member roles are supported in the UI: admin, event planner, moderator, helper, member.
 - The Wishlists tab now supports one PNG/JPEG image post per member for the current week, owner-only updates to that same post, public gift comments, and member-home links pulled from the linked member record.
@@ -97,8 +98,8 @@ Apply and test the live weekly wishlist flow against the real Supabase project:
 
 ## Likely Next Improvement
 
-- Add search and filtering to the Facebook-first directory.
 - Extend private member login features beyond auth, such as saved preferences or private profile settings.
+- Move giveaways and weekly highlights off mock data and into the live backend.
 
 ## Resume Prompt
 

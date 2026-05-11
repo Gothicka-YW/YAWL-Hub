@@ -1,6 +1,6 @@
 # YAWL Hub Plan
 
-Last updated: 2026-05-04
+Last updated: 2026-05-10
 
 ## Product Direction
 
@@ -35,20 +35,20 @@ Last updated: 2026-05-04
 
 ### Shared Features
 
-- [ ] Member directory with display name, home link, birthday, and optional notes visible to the group.
-- [ ] Weekly wishlist gallery with image upload or image link support.
-- [ ] Birthday board with upcoming birthdays.
-- [ ] Giveaway board with active and claimed states.
+- [x] Member directory with display name, home link, birthday, and optional notes visible to the group.
+- [x] Weekly wishlist gallery with image upload or image link support.
+- [x] Birthday board with upcoming birthdays.
+- [x] Giveaway board with active and claimed states.
 - [ ] Hangout board with yes, no, and maybe RSVPs.
-- [ ] Group announcements or weekly highlights section.
-- [ ] Admin tools for editing shared data.
-- [ ] Link out to the related Facebook group post or weekly thread.
+- [x] Group announcements or weekly highlights section.
+- [x] Admin tools for editing shared data.
+- [x] Link out to the related Facebook group post or weekly thread.
 
 ### Private Local-Only Features
 
-- [ ] "I visited this home" checklist.
-- [ ] "I already gifted this member" checklist.
-- [ ] Personal notes about members.
+- [x] "I visited this home" checklist.
+- [x] "I already gifted this member" checklist.
+- [x] Personal notes about members.
 - [ ] Draft wishlist notes or templates.
 
 ### Explicitly Out of Scope for v1
@@ -89,60 +89,60 @@ Last updated: 2026-05-04
 
 - [ ] Confirm final app name and branding for YAWL Hub.
 - [x] Choose backend: Supabase, Airtable, or Google Sheets.
-- [ ] Choose access model: admin-created accounts, invite links, password gate, or email login.
+- [x] Choose access model: admin-created accounts, invite links, password gate, or email login.
 - [x] Decide whether members can edit their own profile data in v1 or if admins control all shared updates.
-- [ ] Decide how wishlist images are added: upload files, paste image URLs, or both.
+- [x] Decide how wishlist images are added: upload files, paste image URLs, or both.
 - [ ] Decide whether giveaway claims can be reversed by members or only by admins.
 - [ ] Decide how old weeks should be archived and browsed.
-- [ ] Decide whether birthdays are shown as month/day only or with year hidden.
+- [x] Decide whether birthdays are shown as month/day only or with year hidden.
 
 ## Suggested Data Model
 
 ### Shared Entities
 
-- [ ] Members
+- [x] Members
 - [ ] Weeks
-- [ ] Wishlist entries
-- [ ] Wishlist images
-- [ ] Giveaways
-- [ ] Hangout events
+- [x] Wishlist entries
+- [x] Wishlist images
+- [x] Giveaways
+- [x] Hangout events
 - [ ] RSVPs
 - [ ] Announcements
 
 ### Key Fields To Include Early
 
-- [ ] Member display name
-- [ ] Member home link
-- [ ] Member birthday
+- [x] Member display name
+- [x] Member home link
+- [x] Member birthday
 - [ ] Member timezone or usual play time
-- [ ] Wishlist week reference
-- [ ] Giveaway claimed status
-- [ ] Giveaway claimed by
-- [ ] Hangout date and time
+- [x] Wishlist week reference
+- [x] Giveaway claimed status
+- [x] Giveaway claimed by
+- [x] Hangout date and time
 - [ ] RSVP status
-- [ ] Facebook thread URL
+- [x] Facebook thread URL
 
 ### Local-Only Entities
 
-- [ ] Gifted status by member
-- [ ] Visited status by member
-- [ ] Private notes by member
+- [x] Gifted status by member
+- [x] Visited status by member
+- [x] Private notes by member
 - [ ] Personal draft content
 
 ## App Structure
 
-- [ ] This Week dashboard
-- [ ] Members page
-- [ ] Birthdays page
-- [ ] Giveaways page
-- [ ] Hangouts page
-- [ ] My Notes page
-- [ ] Admin page
+- [x] This Week dashboard
+- [x] Members page
+- [x] Birthdays page
+- [x] Giveaways page
+- [x] Hangouts page
+- [x] My Notes page
+- [x] Admin page
 
 ## Sidebar Layout Plan
 
-- [ ] Left sidebar navigation for core sections.
-- [ ] Main content area focused on the currently selected board or gallery.
+- [x] Left sidebar navigation for core sections.
+- [x] Main content area focused on the currently selected board or gallery.
 - [ ] Quick actions near the top for current week, Facebook thread, and home links.
 - [ ] Small right-side utility area later if needed for private notes or recent activity.
 - [ ] Keep the layout adaptable so it can be reused in a browser side panel extension.
@@ -159,24 +159,24 @@ Last updated: 2026-05-04
 
 ### Phase 2 - Data and Auth
 
-- [ ] Create shared data tables or sheets.
-- [ ] Set up storage for wishlist images.
-- [ ] Implement role-aware access for admins versus members.
-- [ ] Add basic invite or login flow.
+- [x] Create shared data tables or sheets.
+- [x] Set up storage for wishlist images.
+- [x] Implement role-aware access for admins versus members.
+- [x] Add basic invite or login flow.
 
 ### Phase 3 - Core Shared Features
 
-- [ ] Build the member directory.
-- [ ] Build the weekly wishlist gallery.
-- [ ] Build the birthday board.
-- [ ] Build the giveaway board.
+- [x] Build the member directory.
+- [x] Build the weekly wishlist gallery.
+- [x] Build the birthday board.
+- [x] Build the giveaway board.
 - [ ] Build the hangout RSVP board.
-- [ ] Add the Facebook thread link field where relevant.
+- [x] Add the Facebook thread link field where relevant.
 
 ### Phase 4 - Private Member Tools
 
-- [ ] Add gifted and visited tracking stored locally.
-- [ ] Add private notes stored locally.
+- [x] Add gifted and visited tracking stored locally.
+- [x] Add private notes stored locally.
 - [ ] Add personal draft support stored locally.
 
 ### Phase 5 - Admin Workflow
@@ -195,10 +195,10 @@ Last updated: 2026-05-04
 
 ## Success Criteria For v1
 
-- [ ] Members can quickly find every group member's home link.
-- [ ] Admins can post the current week's wishlists in one central place.
+- [x] Members can quickly find every group member's home link.
+- [x] Admins can post the current week's wishlists in one central place.
 - [ ] Members can see birthdays, giveaways, and hangout attendance in one view.
-- [ ] Private personal tracking stays private.
+- [x] Private personal tracking stays private.
 - [ ] The app is pleasant to use side-by-side with Facebook or YoWorld.
 
 ## Nice-To-Have Later
@@ -227,4 +227,6 @@ Last updated: 2026-05-04
 
 - The scaffold now runs as static files without Vite or npm dependencies.
 - Supabase settings live in `src/config.js` for now.
-- Shared data remains mock data until the first live Supabase reads are wired in.
+- Live Supabase reads are wired for members, events, and weekly wishlists.
+- Giveaways and weekly highlights still rely on local/mock data.
+- The Members page now includes search, role filtering, and a home-link-only filter for faster gifting routes.

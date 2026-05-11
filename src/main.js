@@ -125,6 +125,7 @@ const initialWishlists = normalizeMockWishlists(mockWishlists, initialMembers);
 
 const state = {
   activeSection: 'dashboard',
+  memberDirectory: createDefaultMemberDirectoryState(),
   privateData: loadPrivateState(),
   members: initialMembers,
   memberSource: hasSupabaseConfig ? 'loading' : 'mock',
@@ -180,6 +181,11 @@ app.addEventListener('click', async (event) => {
   const { action, memberId, eventId } = actionButton.dataset;
 
   switch (action) {
+    case 'members-clear-filters':
+      state.memberDirectory = createDefaultMemberDirectoryState();
+      render();
+      restoreMemberDirectorySearchFocus();
+      return;
     case 'admin-edit-member':
       beginEditingMember(memberId);
       render();
@@ -220,6 +226,20 @@ app.addEventListener('click', async (event) => {
 });
 
 app.addEventListener('input', (event) => {
+  if (event.target.matches('[data-member-search]')) {
+    const selectionStart = event.target instanceof HTMLInputElement ? event.target.selectionStart : null;
+    const selectionEnd = event.target instanceof HTMLInputElement ? event.target.selectionEnd : null;
+
+    state.memberDirectory = {
+      ...state.memberDirectory,
+      query: event.target.value,
+    };
+
+    render();
+    restoreMemberDirectorySearchFocus(selectionStart, selectionEnd);
+    return;
+  }
+
   if (event.target.matches('[data-private-notes]')) {
     state.privateData = {
       ...state.privateData,
@@ -234,6 +254,26 @@ app.addEventListener('input', (event) => {
 });
 
 app.addEventListener('change', (event) => {
+  if (event.target.matches('[data-member-role-filter]')) {
+    state.memberDirectory = {
+      ...state.memberDirectory,
+      role: normalizeDirectoryRoleFilter(event.target.value),
+    };
+
+    render();
+    return;
+  }
+
+  if (event.target.matches('[data-member-home-filter]')) {
+    state.memberDirectory = {
+      ...state.memberDirectory,
+      onlyHomeLink: Boolean(event.target.checked),
+    };
+
+    render();
+    return;
+  }
+
   syncAdminDraftField(event.target);
 });
 
@@ -1150,14 +1190,159 @@ function renderSectionLaunchTile(eyebrow, title, text, sectionId, footer, modifi
   `;
 }
 
+function createDefaultMemberDirectoryState() {
+  return {
+    query: '',
+    role: 'all',
+    onlyHomeLink: false,
+  };
+}
+
+function getFilteredDirectoryMembers() {
+  const query = cleanText(state.memberDirectory.query).toLowerCase();
+  const role = normalizeDirectoryRoleFilter(state.memberDirectory.role);
+  const onlyHomeLink = Boolean(state.memberDirectory.onlyHomeLink);
+
+  return getMembers().filter((member) => matchesMemberDirectoryFilters(member, query, role, onlyHomeLink));
+}
+
+function matchesMemberDirectoryFilters(member, query, role, onlyHomeLink) {
+  if (role !== 'all' && normalizeGroupRole(member.groupRole) !== role) {
+    return false;
+  }
+
+  if (onlyHomeLink && !cleanText(member.homeLink)) {
+    return false;
+  }
+
+  if (!query) {
+    return true;
+  }
+
+  const searchFields = [
+    member.facebookName,
+    member.displayName,
+    member.inGameName,
+    member.roleLabel,
+    member.birthdayLabel,
+    member.secondaryName,
+    member.metaText,
+    member.statusText,
+  ];
+
+  return searchFields.some((value) => cleanText(value).toLowerCase().includes(query));
+}
+
+function normalizeDirectoryRoleFilter(value) {
+  const normalized = cleanText(value).toLowerCase().replace(/[-\s]+/g, '_');
+
+  if (!normalized || normalized === 'all') {
+    return 'all';
+  }
+
+  return normalizeGroupRole(normalized);
+}
+
+function hasActiveMemberDirectoryFilters() {
+  return Boolean(
+    cleanText(state.memberDirectory.query)
+    || normalizeDirectoryRoleFilter(state.memberDirectory.role) !== 'all'
+    || state.memberDirectory.onlyHomeLink,
+  );
+}
+
+function renderMemberDirectoryToolbar(filteredCount, totalCount) {
+  const roleFilter = normalizeDirectoryRoleFilter(state.memberDirectory.role);
+  const query = cleanText(state.memberDirectory.query);
+  const onlyHomeLink = Boolean(state.memberDirectory.onlyHomeLink);
+  const helperText = hasActiveMemberDirectoryFilters()
+    ? 'Search Facebook name, YoWorld name, role, or birthday. Home-link-only view helps plan gifting routes.'
+    : 'Search Facebook name, YoWorld name, role, or birthday.';
+  const countLabel = filteredCount === totalCount
+    ? `${totalCount} active members`
+    : `${filteredCount} of ${totalCount} shown`;
+
+  return `
+    <div class="directory-toolbar" role="search" aria-label="Member directory filters">
+      <div class="directory-toolbar__controls">
+        <label class="field-group">
+          <span>Search Members</span>
+          <input
+            class="text-input"
+            type="search"
+            value="${escapeHtml(query)}"
+            placeholder="Facebook name, YoWorld name, role, or birthday"
+            data-member-search
+          />
+        </label>
+        <label class="field-group">
+          <span>Role</span>
+          <select class="text-input" data-member-role-filter>
+            ${renderDirectoryRoleFilterOptions(roleFilter)}
+          </select>
+        </label>
+        <div class="field-group">
+          <span>Extras</span>
+          <label class="directory-filter-checkbox">
+            <input type="checkbox" data-member-home-filter ${onlyHomeLink ? 'checked' : ''} />
+            <strong>Only members with home links</strong>
+          </label>
+        </div>
+        <button class="hero-button hero-button--secondary directory-toolbar__clear" type="button" data-action="members-clear-filters">
+          Clear Filters
+        </button>
+      </div>
+      <div class="directory-toolbar__summary">
+        <span class="tag">${escapeHtml(countLabel)}</span>
+        <p class="muted">${escapeHtml(helperText)}</p>
+      </div>
+    </div>
+  `;
+}
+
+function renderDirectoryRoleFilterOptions(selectedValue) {
+  return ['all', 'admin', 'event_planner', 'moderator', 'helper', 'member']
+    .map(
+      (role) => `
+        <option value="${role}" ${normalizeDirectoryRoleFilter(selectedValue) === role ? 'selected' : ''}>${escapeHtml(
+          role === 'all' ? 'All Roles' : formatGroupRoleLabel(role),
+        )}</option>
+      `,
+    )
+    .join('');
+}
+
+function restoreMemberDirectorySearchFocus(selectionStart = null, selectionEnd = null) {
+  window.requestAnimationFrame(() => {
+    const searchInput = app.querySelector('[data-member-search]');
+
+    if (!(searchInput instanceof HTMLInputElement)) {
+      return;
+    }
+
+    searchInput.focus();
+
+    if (selectionStart === null || selectionEnd === null) {
+      const endPosition = searchInput.value.length;
+      searchInput.setSelectionRange(endPosition, endPosition);
+      return;
+    }
+
+    const safeStart = Math.min(selectionStart, searchInput.value.length);
+    const safeEnd = Math.min(selectionEnd, searchInput.value.length);
+    searchInput.setSelectionRange(safeStart, safeEnd);
+  });
+}
+
 function renderMembers() {
   const currentMembers = getMembers();
+  const filteredMembers = getFilteredDirectoryMembers();
 
   return `
     <section class="panel-grid panel-grid--directory-page">
       ${renderDirectoryNotice()}
       ${currentMembers.length
-        ? renderMemberDirectoryPanel(currentMembers)
+        ? renderMemberDirectoryPanel(filteredMembers, currentMembers.length)
         : renderEmptyMemberPanel(
             state.memberSource === 'loading' ? 'Loading members' : 'No members yet',
             state.memberSource === 'loading'
@@ -1168,7 +1353,11 @@ function renderMembers() {
   `;
 }
 
-function renderMemberDirectoryPanel(currentMembers) {
+function renderMemberDirectoryPanel(currentMembers, totalMembers) {
+  const countLabel = currentMembers.length === totalMembers && !hasActiveMemberDirectoryFilters()
+    ? `${totalMembers} active members`
+    : `${currentMembers.length} of ${totalMembers} shown`;
+
   return `
     <article class="panel panel--directory">
       <div class="panel__heading">
@@ -1176,12 +1365,21 @@ function renderMemberDirectoryPanel(currentMembers) {
           <p class="eyebrow">Directory</p>
           <h3>Facebook-first member list</h3>
         </div>
-        <span class="tag">${escapeHtml(`${currentMembers.length} active members`)}</span>
+        <span class="tag">${escapeHtml(countLabel)}</span>
       </div>
       <p class="panel-lead">Facebook names lead each row. Use the YoWorld name as confirmation before sending gifts.</p>
+      ${renderMemberDirectoryToolbar(currentMembers.length, totalMembers)}
       <div class="directory-list" role="list">
-        ${renderMemberDirectoryHeader()}
-        ${currentMembers.map((member) => renderMemberDirectoryRow(member)).join('')}
+        ${currentMembers.length
+          ? `
+              ${renderMemberDirectoryHeader()}
+              ${currentMembers.map((member) => renderMemberDirectoryRow(member)).join('')}
+            `
+          : `
+              <div class="list-row list-row--compact">
+                <span>No members match the current search or filters.</span>
+              </div>
+            `}
       </div>
     </article>
   `;
