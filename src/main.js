@@ -563,7 +563,7 @@ function renderSection() {
 
 function renderDashboard() {
   const upcomingMembers = getUpcomingBirthdayMembers(3);
-  const dashboardCalendar = buildDashboardCalendarModel(getEvents());
+  const dashboardCalendar = buildDashboardCalendarModel(getEvents(), getBirthdayMembers());
   const featuredWishlists = getActiveWishlists(3);
   const totalWishlists = getActiveWishlists().length;
   const dashboardStats = getDashboardStats(upcomingMembers);
@@ -1043,13 +1043,13 @@ function renderDashboardCalendarPanel(calendarModel) {
     <article class="panel panel--calendar dashboard-card dashboard-card--calendar">
       <div class="panel__heading">
         <div>
-          <p class="eyebrow">Events Calendar</p>
+          <p class="eyebrow">Shared Calendar</p>
           <h3>${escapeHtml(calendarModel.monthLabel)}</h3>
         </div>
-        <span class="tag">${escapeHtml(`${calendarModel.eventCount} this month`)}</span>
+        <span class="tag">${escapeHtml(`${calendarModel.calendarItemCount} on calendar`)}</span>
       </div>
       <p class="panel-lead">${escapeHtml(getDashboardCalendarLeadText(calendarModel))}</p>
-      <div class="month-calendar" role="group" aria-label="${escapeHtml(`Events for ${calendarModel.monthLabel}`)}">
+      <div class="month-calendar" role="group" aria-label="${escapeHtml(`Calendar for ${calendarModel.monthLabel}`)}">
         <div class="month-calendar__weekdays" aria-hidden="true">
           ${WEEKDAY_NAMES_SHORT.map((weekday) => `<span class="month-calendar__weekday">${escapeHtml(weekday)}</span>`).join('')}
         </div>
@@ -1066,12 +1066,12 @@ function renderDashboardCalendarCell(cell) {
     return '<div class="month-calendar__cell month-calendar__cell--empty" aria-hidden="true"></div>';
   }
 
-  const primaryEvent = cell.events[0];
-  const moreCount = Math.max(0, cell.events.length - 1);
+  const primaryCalendarItem = cell.calendarItems[0];
+  const moreCount = Math.max(0, cell.calendarItems.length - 1);
   const cellClasses = [
     'month-calendar__cell',
     cell.isToday ? 'month-calendar__cell--today' : '',
-    cell.events.length ? 'month-calendar__cell--has-events' : '',
+    cell.calendarItems.length ? 'month-calendar__cell--has-events' : '',
   ]
     .filter(Boolean)
     .join(' ');
@@ -1081,14 +1081,14 @@ function renderDashboardCalendarCell(cell) {
     <div class="${cellClasses}"${cellTitle ? ` title="${escapeHtml(cellTitle)}"` : ''}>
       <div class="month-calendar__day-row">
         <span class="month-calendar__day-number">${cell.dayNumber}</span>
-        ${cell.events.length ? `<span class="month-calendar__day-count">${cell.events.length}</span>` : ''}
+        ${cell.calendarItems.length ? `<span class="month-calendar__day-count">${cell.calendarItems.length}</span>` : ''}
       </div>
-      ${primaryEvent
+      ${primaryCalendarItem
         ? `
             <div class="month-calendar__events">
               <div class="month-calendar__event">
-                <span class="event-type-icon month-calendar__event-icon ${primaryEvent.typeIndicatorClass}" aria-hidden="true">${escapeHtml(primaryEvent.typeIndicator)}</span>
-                <span class="month-calendar__event-title">${escapeHtml(primaryEvent.title)}</span>
+                <span class="event-type-icon month-calendar__event-icon ${primaryCalendarItem.typeIndicatorClass}" aria-hidden="true">${escapeHtml(primaryCalendarItem.typeIndicator)}</span>
+                <span class="month-calendar__event-title">${escapeHtml(primaryCalendarItem.title)}</span>
               </div>
               ${moreCount ? `<div class="month-calendar__more">+${moreCount} more</div>` : ''}
             </div>
@@ -1498,7 +1498,7 @@ function renderGiveaways() {
 }
 
 function renderHangouts() {
-  const currentEvents = getEvents();
+  const currentEvents = getCalendarFeedItems();
   const currentMembers = getMembers();
 
   return `
@@ -1511,7 +1511,7 @@ function renderHangouts() {
             state.eventSource === 'loading' ? 'Loading events' : 'No events posted yet',
             state.eventSource === 'loading'
               ? 'Trying to load the shared event calendar from Supabase now.'
-              : 'No birthday parties, meet ups, games, special events, or custom events have been added yet.',
+              : 'No birthdays or shared events are showing yet.',
           )}
     </section>
   `;
@@ -1561,7 +1561,19 @@ function renderEventComposerPanel(currentMembers) {
 
 function renderEventCard(calendarEvent, options = {}) {
   const { showAdminActions = false } = options;
-  const showEventActions = showAdminActions || canEditEvent(calendarEvent);
+  const isBirthdayCard = Boolean(calendarEvent.isBirthday);
+  const showEventActions = !isBirthdayCard && (showAdminActions || canEditEvent(calendarEvent));
+  const leadText = isBirthdayCard
+    ? `${calendarEvent.title}'s birthday is pulled from the member directory.`
+    : (calendarEvent.details || getDefaultEventDescription(calendarEvent.eventType));
+  const primaryMetaLabel = isBirthdayCard ? 'Member' : 'Host';
+  const primaryMetaValue = isBirthdayCard
+    ? (calendarEvent.hostName || calendarEvent.title)
+    : (calendarEvent.hostName || 'Host coming soon');
+  const secondaryMetaLabel = isBirthdayCard ? 'Birthday' : 'Location';
+  const secondaryMetaValue = isBirthdayCard
+    ? (calendarEvent.birthdayLabel || formatEventDateLabel(calendarEvent.eventDate) || 'Birthday coming soon')
+    : (calendarEvent.locationText || 'Location coming soon');
 
   return `
     <article class="panel event-card">
@@ -1575,31 +1587,39 @@ function renderEventCard(calendarEvent, options = {}) {
         </div>
         <span class="tag">${escapeHtml(calendarEvent.whenLabel)}</span>
       </div>
-      <p class="panel-lead">${escapeHtml(calendarEvent.details || getDefaultEventDescription(calendarEvent.eventType))}</p>
+      <p class="panel-lead">${escapeHtml(leadText)}</p>
       <div class="event-meta">
         <div class="event-meta-row">
-          <strong>Host</strong>
-          <span>${escapeHtml(calendarEvent.hostName || 'Host coming soon')}</span>
+          <strong>${escapeHtml(primaryMetaLabel)}</strong>
+          <span>${escapeHtml(primaryMetaValue)}</span>
         </div>
         <div class="event-meta-row">
-          <strong>Location</strong>
-          <span>${escapeHtml(calendarEvent.locationText || 'Location coming soon')}</span>
+          <strong>${escapeHtml(secondaryMetaLabel)}</strong>
+          <span>${escapeHtml(secondaryMetaValue)}</span>
         </div>
       </div>
-      <div class="stats-grid stats-grid--compact event-stats">
-        <div class="stat-card">
-          <span>Yes</span>
-          <strong>${calendarEvent.yesCount}</strong>
-        </div>
-        <div class="stat-card">
-          <span>Maybe</span>
-          <strong>${calendarEvent.maybeCount}</strong>
-        </div>
-        <div class="stat-card">
-          <span>No</span>
-          <strong>${calendarEvent.noCount}</strong>
-        </div>
-      </div>
+      ${isBirthdayCard
+        ? `
+            <div class="button-row admin-form-actions">
+              ${calendarEvent.homeLink ? `<a class="hero-button hero-button--secondary" href="${escapeHtml(calendarEvent.homeLink)}" target="_blank" rel="noreferrer">Open Home Link</a>` : '<span class="muted">No home link added yet.</span>'}
+            </div>
+          `
+        : `
+            <div class="stats-grid stats-grid--compact event-stats">
+              <div class="stat-card">
+                <span>Yes</span>
+                <strong>${calendarEvent.yesCount}</strong>
+              </div>
+              <div class="stat-card">
+                <span>Maybe</span>
+                <strong>${calendarEvent.maybeCount}</strong>
+              </div>
+              <div class="stat-card">
+                <span>No</span>
+                <strong>${calendarEvent.noCount}</strong>
+              </div>
+            </div>
+          `}
       ${showEventActions
         ? `
             <div class="button-row admin-form-actions">
@@ -2467,6 +2487,14 @@ function getEvents() {
   return [...state.events].sort(compareEvents);
 }
 
+function getCalendarFeedItems() {
+  const birthdayEntries = getBirthdayMembers()
+    .map((member) => createUpcomingBirthdayCalendarEntry(member))
+    .filter(Boolean);
+
+  return [...getEvents(), ...birthdayEntries].sort(compareCalendarItems);
+}
+
 function getBirthdayMembers() {
   return getMembers().filter((member) => member.hasBirthday).sort(compareUpcomingBirthdays);
 }
@@ -2476,13 +2504,13 @@ function getUpcomingBirthdayMembers(limit) {
   return birthdayMembers.length ? birthdayMembers.slice(0, limit) : getMembers().slice(0, limit);
 }
 
-function buildDashboardCalendarModel(events) {
+function buildDashboardCalendarModel(events, birthdayMembers = []) {
   const today = new Date();
   const monthIndex = today.getMonth();
   const year = today.getFullYear();
   const firstWeekday = new Date(year, monthIndex, 1).getDay();
   const daysInMonth = new Date(year, monthIndex + 1, 0).getDate();
-  const eventsByDay = new Map();
+  const calendarItemsByDay = new Map();
   const monthEvents = events.filter((calendarEvent) => {
     const parts = parseIsoDateParts(calendarEvent.eventDate);
 
@@ -2490,11 +2518,31 @@ function buildDashboardCalendarModel(events) {
       return false;
     }
 
-    const currentEvents = eventsByDay.get(parts.day) || [];
+    const currentEvents = calendarItemsByDay.get(parts.day) || [];
     currentEvents.push(calendarEvent);
-    eventsByDay.set(parts.day, currentEvents);
+    calendarItemsByDay.set(parts.day, currentEvents);
     return true;
   });
+  const monthBirthdayEntries = birthdayMembers
+    .map((member) => createBirthdayCalendarEntry(member, year))
+    .filter((entry) => entry && parseIsoDateParts(entry.eventDate)?.monthIndex === monthIndex);
+
+  monthBirthdayEntries.forEach((birthdayEntry) => {
+    const parts = parseIsoDateParts(birthdayEntry.eventDate);
+
+    if (!parts) {
+      return;
+    }
+
+    const currentItems = calendarItemsByDay.get(parts.day) || [];
+    currentItems.push(birthdayEntry);
+    calendarItemsByDay.set(parts.day, currentItems);
+  });
+
+  calendarItemsByDay.forEach((items, dayNumber) => {
+    calendarItemsByDay.set(dayNumber, [...items].sort(compareCalendarItems));
+  });
+
   const cells = [];
 
   for (let blankIndex = 0; blankIndex < firstWeekday; blankIndex += 1) {
@@ -2513,7 +2561,7 @@ function buildDashboardCalendarModel(events) {
         year === today.getFullYear() &&
         monthIndex === today.getMonth() &&
         dayNumber === today.getDate(),
-      events: eventsByDay.get(dayNumber) || [],
+      calendarItems: calendarItemsByDay.get(dayNumber) || [],
     });
   }
 
@@ -2527,6 +2575,8 @@ function buildDashboardCalendarModel(events) {
   return {
     monthLabel: formatMonthYearLabel(year, monthIndex),
     eventCount: monthEvents.length,
+    birthdayCount: monthBirthdayEntries.length,
+    calendarItemCount: monthEvents.length + monthBirthdayEntries.length,
     totalEventCount: events.length,
     cells,
   };
@@ -2545,15 +2595,25 @@ function getDashboardCalendarLeadText(calendarModel) {
     return state.eventSourceMessage || 'Live events are unavailable right now.';
   }
 
-  if (calendarModel.eventCount > 0) {
-    return `${calendarModel.eventCount} active ${calendarModel.eventCount === 1 ? 'event is' : 'events are'} scheduled in ${calendarModel.monthLabel}.`;
+  if (calendarModel.eventCount > 0 || calendarModel.birthdayCount > 0) {
+    const parts = [];
+
+    if (calendarModel.eventCount > 0) {
+      parts.push(`${calendarModel.eventCount} active ${calendarModel.eventCount === 1 ? 'event' : 'events'}`);
+    }
+
+    if (calendarModel.birthdayCount > 0) {
+      parts.push(`${calendarModel.birthdayCount} ${calendarModel.birthdayCount === 1 ? 'birthday' : 'birthdays'}`);
+    }
+
+    return `${parts.join(' and ')} on the calendar in ${calendarModel.monthLabel}.`;
   }
 
   if (calendarModel.totalEventCount > 0) {
-    return `No active events are scheduled in ${calendarModel.monthLabel} yet.`;
+    return `No active events or birthdays are scheduled in ${calendarModel.monthLabel} yet.`;
   }
 
-  return 'No active events are on the calendar yet.';
+  return 'No active events or birthdays are on the calendar yet.';
 }
 
 function buildDashboardCalendarCellTitle(cell) {
@@ -2568,16 +2628,20 @@ function buildDashboardCalendarCellTitle(cell) {
     year: 'numeric',
   });
 
-  if (!cell.events.length) {
+  if (!cell.calendarItems.length) {
     return dateLabel;
   }
 
-  const eventLines = cell.events.map((calendarEvent) => {
-    const startTime = formatTimeLabel(calendarEvent.startTime);
-    return startTime ? `${calendarEvent.title} at ${startTime}` : calendarEvent.title;
+  const itemLines = cell.calendarItems.map((calendarItem) => {
+    if (calendarItem.isBirthday) {
+      return `${calendarItem.title} birthday`;
+    }
+
+    const startTime = formatTimeLabel(calendarItem.startTime);
+    return startTime ? `${calendarItem.title} at ${startTime}` : calendarItem.title;
   });
 
-  return [dateLabel, ...eventLines].join('\n');
+  return [dateLabel, ...itemLines].join('\n');
 }
 
 function getDirectoryStatusText() {
@@ -4029,9 +4093,7 @@ function parseBirthdayInput(value) {
     };
   }
 
-  const match = rawValue.match(/^([A-Za-z]+)\s+(\d{1,2})$/);
-  const month = MONTH_NAME_TO_NUMBER[cleanText(match?.[1]).toLowerCase()];
-  const day = Number.parseInt(match?.[2] || '', 10);
+  const { birthdayMonth: month, birthdayDay: day } = resolveBirthdayParts(rawValue);
 
   if (!month || Number.isNaN(day) || day < 1 || day > 31) {
     throw new Error('Birthday must look like "September 6" or be left blank.');
@@ -4373,6 +4435,8 @@ function normalizeMockMember(member, index) {
   const groupRole = normalizeGroupRole(member.groupRole);
   const playWindow = cleanText(member.playWindow);
   const notes = cleanText(member.notes || member.status);
+  const birthdayRaw = cleanText(member.birthday);
+  const birthdayParts = resolveBirthdayParts(birthdayRaw);
 
   return {
     id: cleanText(member.id) || createClientMemberId(facebookName),
@@ -4382,11 +4446,11 @@ function normalizeMockMember(member, index) {
     secondaryName: inGameName ? `YoWorld: ${inGameName}` : 'YoWorld name not added yet.',
     homeLink: sanitizeUrl(cleanText(member.homeLink)),
     houseKey: cleanText(member.houseKey),
-    birthdayRaw: cleanText(member.birthday),
-    birthdayLabel: cleanText(member.birthday) || 'Birthday not added',
-    birthdayMonth: null,
-    birthdayDay: null,
-    hasBirthday: Boolean(cleanText(member.birthday)),
+    birthdayRaw,
+    birthdayLabel: birthdayRaw || 'Birthday not added',
+    birthdayMonth: birthdayParts.birthdayMonth,
+    birthdayDay: birthdayParts.birthdayDay,
+    hasBirthday: Boolean(birthdayRaw),
     groupRole,
     roleLabel: formatGroupRoleLabel(groupRole),
     roleTagClass: getRoleTagClass(groupRole),
@@ -4508,8 +4572,7 @@ function normalizeSupabaseMember(row, index) {
   const inGameName = cleanText(row.in_game_name);
   const displayName = facebookName || inGameName || `Member ${index + 1}`;
   const birthdayRaw = cleanText(row.birthday_raw);
-  const birthdayMonth = parseNullableInt(row.birthday_month);
-  const birthdayDay = parseNullableInt(row.birthday_day);
+  const birthdayParts = resolveBirthdayParts(birthdayRaw, row.birthday_month, row.birthday_day);
   const notes = cleanText(row.notes);
   const houseKey = cleanText(row.house_key);
   const homeLink = buildHomeLink(houseKey);
@@ -4524,10 +4587,10 @@ function normalizeSupabaseMember(row, index) {
     homeLink,
     houseKey,
     birthdayRaw,
-    birthdayLabel: formatBirthdayLabel(birthdayRaw, birthdayMonth, birthdayDay),
-    birthdayMonth,
-    birthdayDay,
-    hasBirthday: Boolean(birthdayRaw || (birthdayMonth && birthdayDay)),
+    birthdayLabel: formatBirthdayLabel(birthdayRaw, birthdayParts.birthdayMonth, birthdayParts.birthdayDay),
+    birthdayMonth: birthdayParts.birthdayMonth,
+    birthdayDay: birthdayParts.birthdayDay,
+    hasBirthday: Boolean(birthdayRaw || (birthdayParts.birthdayMonth && birthdayParts.birthdayDay)),
     groupRole,
     roleLabel: formatGroupRoleLabel(groupRole),
     roleTagClass: getRoleTagClass(groupRole),
@@ -4783,6 +4846,14 @@ function compareEvents(left, right) {
   }
 
   return left.title.localeCompare(right.title) || left.sortOrder - right.sortOrder;
+}
+
+function compareCalendarItems(left, right) {
+  if (Boolean(left.isBirthday) !== Boolean(right.isBirthday)) {
+    return left.isBirthday ? -1 : 1;
+  }
+
+  return compareEvents(left, right);
 }
 
 function compareWishlists(left, right) {
@@ -5208,6 +5279,43 @@ function formatMonthDay(month, day) {
   });
 }
 
+function resolveBirthdayParts(birthdayRaw, birthdayMonth = null, birthdayDay = null) {
+  const parsedMonth = parseNullableInt(birthdayMonth);
+  const parsedDay = parseNullableInt(birthdayDay);
+
+  if (parsedMonth && parsedDay) {
+    return {
+      birthdayMonth: parsedMonth,
+      birthdayDay: parsedDay,
+    };
+  }
+
+  const rawValue = cleanText(birthdayRaw);
+
+  if (!rawValue) {
+    return {
+      birthdayMonth: parsedMonth,
+      birthdayDay: parsedDay,
+    };
+  }
+
+  const match = rawValue.match(/^([A-Za-z]+)\s+(\d{1,2})$/);
+  const month = MONTH_NAME_TO_NUMBER[cleanText(match?.[1]).toLowerCase()];
+  const day = Number.parseInt(match?.[2] || '', 10);
+
+  if (!month || Number.isNaN(day) || day < 1 || day > 31) {
+    return {
+      birthdayMonth: parsedMonth,
+      birthdayDay: parsedDay,
+    };
+  }
+
+  return {
+    birthdayMonth: month,
+    birthdayDay: day,
+  };
+}
+
 function compareUpcomingBirthdays(left, right) {
   const leftOffset = getBirthdayOffset(left);
   const rightOffset = getBirthdayOffset(right);
@@ -5220,20 +5328,135 @@ function compareUpcomingBirthdays(left, right) {
 }
 
 function getBirthdayOffset(member) {
-  if (!member.hasBirthday || !member.birthdayMonth || !member.birthdayDay) {
+  const nextBirthday = getNextBirthdayDateValue(member);
+
+  if (!nextBirthday) {
     return Number.POSITIVE_INFINITY;
+  }
+
+  const today = new Date();
+  const todayAtMidnight = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+
+  return nextBirthday.getTime() - todayAtMidnight.getTime();
+}
+
+function createUpcomingBirthdayCalendarEntry(member) {
+  const nextBirthday = getNextBirthdayDateValue(member);
+
+  if (!nextBirthday) {
+    return null;
+  }
+
+  return createBirthdayCalendarEntry(
+    member,
+    nextBirthday.getFullYear(),
+    formatIsoDate(nextBirthday),
+  );
+}
+
+function createBirthdayCalendarEntry(member, year, eventDateOverride = '') {
+  const birthdayParts = resolveBirthdayParts(member?.birthdayRaw, member?.birthdayMonth, member?.birthdayDay);
+
+  if (!member?.hasBirthday || !birthdayParts.birthdayMonth || !birthdayParts.birthdayDay) {
+    return null;
+  }
+
+  const eventDate = cleanText(eventDateOverride) || buildBirthdayEventDate(year, birthdayParts.birthdayMonth, birthdayParts.birthdayDay);
+
+  if (!eventDate) {
+    return null;
+  }
+
+  const birthdayName = cleanText(member.facebookName || member.displayName || member.inGameName);
+
+  if (!birthdayName) {
+    return null;
+  }
+
+  return {
+    id: `birthday-${cleanText(member.id) || createClientMemberId(birthdayName)}-${eventDate}`,
+    title: birthdayName,
+    eventType: EVENT_TYPE_DETAILS.birthday_party.label,
+    eventTypeLabel: 'Birthday',
+    typeIndicator: EVENT_TYPE_DETAILS.birthday_party.indicator,
+    typeIndicatorClass: EVENT_TYPE_DETAILS.birthday_party.className,
+    eventDate,
+    startTime: '',
+    endTime: '',
+    timezone: '',
+    whenLabel: formatEventDateLabel(eventDate),
+    hostName: birthdayName,
+    hostMemberId: cleanText(member.id),
+    createdByUserId: '',
+    createdByEmail: '',
+    locationText: '',
+    homeLink: sanitizeUrl(cleanText(member.homeLink)),
+    birthdayLabel: formatBirthdayLabel(member.birthdayRaw, birthdayParts.birthdayMonth, birthdayParts.birthdayDay),
+    details: `${birthdayName}'s birthday.`,
+    yesCount: 0,
+    maybeCount: 0,
+    noCount: 0,
+    isActive: true,
+    isBirthday: true,
+    sortOrder: -1,
+  };
+}
+
+function buildBirthdayEventDate(year, month, day) {
+  const safeYear = parseNullableInt(year);
+  const safeMonth = parseNullableInt(month);
+  const safeDay = parseNullableInt(day);
+
+  if (!safeYear || !safeMonth || !safeDay) {
+    return '';
+  }
+
+  const date = new Date(safeYear, safeMonth - 1, safeDay);
+
+  if (
+    date.getFullYear() !== safeYear
+    || date.getMonth() !== safeMonth - 1
+    || date.getDate() !== safeDay
+  ) {
+    return '';
+  }
+
+  return `${safeYear}-${String(safeMonth).padStart(2, '0')}-${String(safeDay).padStart(2, '0')}`;
+}
+
+function getNextBirthdayDateValue(member) {
+  const birthdayParts = resolveBirthdayParts(member?.birthdayRaw, member?.birthdayMonth, member?.birthdayDay);
+
+  if (!member?.hasBirthday || !birthdayParts.birthdayMonth || !birthdayParts.birthdayDay) {
+    return null;
   }
 
   const today = new Date();
   const currentYear = today.getFullYear();
   const todayAtMidnight = new Date(currentYear, today.getMonth(), today.getDate());
-  let nextBirthday = new Date(currentYear, member.birthdayMonth - 1, member.birthdayDay);
+  let nextBirthday = new Date(currentYear, birthdayParts.birthdayMonth - 1, birthdayParts.birthdayDay);
 
-  if (nextBirthday < todayAtMidnight) {
-    nextBirthday = new Date(currentYear + 1, member.birthdayMonth - 1, member.birthdayDay);
+  if (
+    nextBirthday.getFullYear() !== currentYear
+    || nextBirthday.getMonth() !== birthdayParts.birthdayMonth - 1
+    || nextBirthday.getDate() !== birthdayParts.birthdayDay
+  ) {
+    return null;
   }
 
-  return nextBirthday.getTime() - todayAtMidnight.getTime();
+  if (nextBirthday < todayAtMidnight) {
+    nextBirthday = new Date(currentYear + 1, birthdayParts.birthdayMonth - 1, birthdayParts.birthdayDay);
+  }
+
+  return nextBirthday;
+}
+
+function formatIsoDate(date) {
+  if (!(date instanceof Date) || Number.isNaN(date.getTime())) {
+    return '';
+  }
+
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 }
 
 function parseNullableInt(value) {
