@@ -17,7 +17,8 @@ Use these files in order:
 13. Run `12_member_owned_events.sql` after `11_weekly_wishlists.sql` if linked members should be able to post events and manage only their own entries.
 14. Run `13_wishlist_image_uploads_and_comments.sql` to add the wishlist image bucket, image-post columns, and gift comments.
 15. Run `14_invite_code_account_claims.sql` to switch member ownership to `auth.uid()`, add admin-generated invite codes, and let signed-in users claim their member profile after account creation.
-16. Create or sign in to a Supabase Auth account that uses the same email as your `staff_permissions` row.
+16. Push the self-owned posting migration in `supabase/migrations/20260512000100_self_owned_posting.sql` after `14_invite_code_account_claims.sql` if wish lists and new events should be locked to the signed-in member profile.
+17. Create or sign in to a Supabase Auth account that uses the same email as your `staff_permissions` row.
 
 Notes:
 
@@ -39,6 +40,7 @@ Notes:
 - `12_member_owned_events.sql` extends the events policies so linked members can post events and manage only the events created under their own linked member profile.
 - `13_wishlist_image_uploads_and_comments.sql` adds the public wishlist image bucket, owner-only image post updates, and public gift comments.
 - `14_invite_code_account_claims.sql` adds invite-code claiming, links member ownership to `auth.uid()`, and keeps self-service email/password resets inside Supabase Auth.
+- `supabase/migrations/20260512000100_self_owned_posting.sql` locks new wish list and event posts to the signed-in member profile while still allowing staff to moderate existing event posts.
 
 ## Supabase CLI Workflow
 

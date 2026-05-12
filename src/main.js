@@ -391,7 +391,7 @@ function renderHeader() {
       </div>
       <div class="hero__actions">
         ${renderHeaderLinks()}
-        <button class="hero-button hero-button--secondary" type="button" data-section="notes">Private Tracker</button>
+        <button class="hero-button hero-button--secondary" type="button" data-section="notes">Personal Notes</button>
       </div>
     </header>
   `;
@@ -490,8 +490,8 @@ function canManageEvents() {
   return Boolean(state.admin.staffProfile?.isActive && state.admin.staffProfile.canManageEvents);
 }
 
-function canCreateEvents() {
-  return Boolean(canManageEvents() || getLinkedEventMember());
+function canPostOwnEvents() {
+  return Boolean(getLinkedEventMember());
 }
 
 function canEditEvent(calendarEvent) {
@@ -520,17 +520,9 @@ function canEditEvent(calendarEvent) {
   );
 }
 
-function canManageWishlists() {
-  return canManageMembers();
-}
-
 function canEditWishlistPost(wishlist) {
   if (!wishlist) {
     return false;
-  }
-
-  if (canManageWishlists()) {
-    return true;
   }
 
   const linkedMember = getLinkedWishlistMember();
@@ -591,7 +583,7 @@ function renderDashboard() {
           ${facebookGroupUrl ? `<a class="hero-button" href="${facebookGroupUrl}" target="_blank" rel="noreferrer">Open Group</a>` : ''}
           ${facebookThreadUrl ? `<a class="hero-button hero-button--secondary" href="${facebookThreadUrl}" target="_blank" rel="noreferrer">Weekly Thread</a>` : ''}
           ${yoKeysWidgetUrl ? `<a class="hero-button hero-button--secondary" href="${yoKeysWidgetUrl}" target="_blank" rel="noreferrer">Launch YoKeys</a>` : ''}
-          <button class="hero-button hero-button--secondary" type="button" data-section="notes">Private Tracker</button>
+          <button class="hero-button hero-button--secondary" type="button" data-section="notes">Personal Notes</button>
         </div>
       </article>
 
@@ -830,19 +822,14 @@ function renderWishlistComposer(editorState) {
         </div>
         <span class="tag">${escapeHtml(formatWishlistWeekLabel(getCurrentWishlistWeekStartIso()))}</span>
       </div>
-      <p class="panel-lead">Upload a PNG or JPEG of your wish list board. Saving again updates the same weekly post instead of creating a second one.</p>
+      <p class="panel-lead">Upload a PNG or JPEG of your wish list board. It always posts under your linked member profile, and saving again updates the same weekly post instead of creating a second one.</p>
       <form class="admin-form wishlist-image-form" data-wishlist-form>
         <div class="form-grid">
-          ${canManageWishlists()
-            ? `
-                <label class="field-group">
-                  <span>Member</span>
-                  <select class="text-input" name="member_id">
-                    ${renderWishlistMemberOptions(editorState.availableMembers, form.memberId)}
-                  </select>
-                </label>
-              `
-            : `<input type="hidden" name="member_id" value="${escapeHtml(form.memberId)}" />`}
+          <label class="field-group">
+            <span>Posting As</span>
+            <input class="text-input" type="text" value="${escapeHtml(selectedMember?.displayName || 'Linked member')}" readonly />
+          </label>
+          <input type="hidden" name="member_id" value="${escapeHtml(form.memberId)}" />
           <label class="field-group field-group--wide wishlist-upload-field">
             <span>Wish List Image</span>
             <input class="text-input" type="file" name="board_image_file" accept="image/png,image/jpeg" />
@@ -1531,7 +1518,11 @@ function renderHangouts() {
 }
 
 function renderEventComposerPanel(currentMembers) {
-  if (canCreateEvents()) {
+  const editingEvent = state.admin.editingEventId
+    ? getEvents().find((entry) => entry.id === state.admin.editingEventId)
+    : null;
+
+  if ((editingEvent && canEditEvent(editingEvent)) || canPostOwnEvents()) {
     return renderAdminEventEditorPanel(currentMembers, { context: 'events' });
   }
 
@@ -2064,8 +2055,12 @@ function renderAdminEventEditorPanel(currentMembers, options = {}) {
   const form = getEventEditorFormState();
   const isEditing = Boolean(state.admin.editingEventId);
   const isEventsContext = context === 'events';
-  const canChooseHost = canManageEvents();
   const linkedMember = getLinkedEventMember();
+  const postingMemberName = cleanText(linkedMember?.facebookName || linkedMember?.displayName);
+  const canChooseHost = Boolean(context === 'admin' && canManageEvents() && isEditing);
+  const hostName = canChooseHost
+    ? cleanText(form.hostName)
+    : cleanText(form.hostName) || postingMemberName;
   const panelEyebrow = isEventsContext ? 'Post an Event' : 'Event Calendar Editor';
   const panelTitle = isEventsContext
     ? (isEditing ? 'Update your event' : 'Post a new event')
@@ -2074,8 +2069,28 @@ function renderAdminEventEditorPanel(currentMembers, options = {}) {
     ? (isEditing ? 'Editing your event' : 'Shared calendar')
     : (isEditing ? 'Editing live event' : 'Shared calendar');
   const panelLead = canChooseHost
-    ? 'Add birthday parties, meet ups, games, special events, or a custom event type here. The event type controls the icon shown next to the event title.'
-    : `Your claimed member account can post as ${linkedMember?.displayName || 'your member profile'} and can edit or deactivate only the events it created.`;
+    ? 'Staff can update existing shared events here. New event posts are still locked to the signed-in member profile.'
+    : (isEditing
+        ? 'This event stays linked to its original poster while you update the details.'
+        : `New event posts always publish as ${postingMemberName || 'your linked member profile'} and stay editable by the person who created them.`);
+
+  if (!isEditing && context === 'admin' && !linkedMember) {
+    return `
+      <article class="panel">
+        <div class="panel__heading">
+          <div>
+            <p class="eyebrow">Event Calendar Editor</p>
+            <h3>Claim your member invite to post new events</h3>
+          </div>
+          <span class="tag">Self-owned posting</span>
+        </div>
+        <p class="panel-lead">New shared event posts are now locked to the logged-in member profile. Claim your member invite in Account first, then come back here to post as yourself. You can still edit or deactivate existing events below.</p>
+        <div class="button-row">
+          <button class="hero-button hero-button--secondary" type="button" data-section="account">Open Account</button>
+        </div>
+      </article>
+    `;
+  }
 
   return `
     <article class="panel ${isEventsContext ? 'panel--span-full' : ''}">
@@ -2124,8 +2139,8 @@ function renderAdminEventEditorPanel(currentMembers, options = {}) {
           </label>
           <label class="field-group">
             <span>Host</span>
-            <input class="text-input" type="text" name="host_name" value="${escapeHtml(form.hostName)}" ${canChooseHost ? 'list="event-host-options" placeholder="Nova June"' : 'readonly'} />
-            <small class="field-help">${escapeHtml(canChooseHost ? 'Use a member name from the directory when possible.' : 'Claimed member event posts keep the host locked to your member profile.')}</small>
+            <input class="text-input" type="text" name="host_name" value="${escapeHtml(hostName)}" ${canChooseHost ? 'list="event-host-options" placeholder="Nova June"' : 'readonly'} />
+            <small class="field-help">${escapeHtml(canChooseHost ? 'Staff can correct the host name while editing an existing event.' : (postingMemberName ? 'New event posts stay locked to your claimed member profile.' : 'This event keeps the original host while you edit the rest of the details.'))}</small>
           </label>
           <label class="field-group">
             <span>Location</span>
@@ -2162,7 +2177,7 @@ function renderAdminEventEditorPanel(currentMembers, options = {}) {
           <button class="hero-button hero-button--secondary" type="button" data-action="admin-reset-event-form">${escapeHtml(isEditing ? 'Cancel Edit' : 'Clear Form')}</button>
         </div>
       </form>
-      <p class="muted">${escapeHtml(canChooseHost ? 'Event planners and admins can manage the live shared calendar here. Old events should be deactivated instead of hard deleted.' : 'Member-posted events stay editable only by the member who created them and by staff with event access.')}</p>
+      <p class="muted">${escapeHtml(canChooseHost ? 'Staff can manage the live shared calendar here. Old events should be deactivated instead of hard deleted.' : 'New event posts stay tied to the logged-in member account. Staff can still moderate existing events when needed.')}</p>
     </article>
   `;
 }
@@ -2379,10 +2394,6 @@ function getCurrentWeekWishlistForMember(memberId) {
 }
 
 function getWishlistEditorMembers() {
-  if (canManageWishlists()) {
-    return getMembers();
-  }
-
   const linkedMember = getLinkedWishlistMember();
   return linkedMember ? [linkedMember] : [];
 }
@@ -2396,7 +2407,7 @@ function getWishlistEditorState() {
   const selectedMember = findMemberById(state.admin.wishlistForm.memberId) || availableMembers[0] || null;
 
   return {
-    canEdit: canManageWishlists() || hasLinkedWishlistAccess(),
+    canEdit: hasLinkedWishlistAccess(),
     availableMembers,
     selectedMember,
     currentWishlist: selectedMember ? getCurrentWeekWishlistForMember(selectedMember.id) : null,
@@ -3367,8 +3378,24 @@ async function handleAdminMemberSubmit(event) {
 }
 
 async function handleAdminEventSubmit(event) {
-  if (!canCreateEvents()) {
-    setAdminNotice('This account does not have permission to post events.', 'error');
+  const currentEvent = state.admin.editingEventId
+    ? getEvents().find((entry) => entry.id === state.admin.editingEventId)
+    : null;
+
+  if (state.admin.editingEventId && !currentEvent) {
+    setAdminNotice('That event could not be found.', 'error');
+    render();
+    return;
+  }
+
+  if (currentEvent && !canEditEvent(currentEvent)) {
+    setAdminNotice('You can edit only events you created unless you have event manager access.', 'error');
+    render();
+    return;
+  }
+
+  if (!currentEvent && !canPostOwnEvents()) {
+    setAdminNotice('Claim your member invite before posting a new event.', 'error');
     render();
     return;
   }
@@ -3378,7 +3405,7 @@ async function handleAdminEventSubmit(event) {
   render();
 
   try {
-    const payload = buildEventPayload(new FormData(event.target));
+    const payload = buildEventPayload(new FormData(event.target), currentEvent);
     const wasEditing = Boolean(state.admin.editingEventId);
 
     const response = state.admin.editingEventId
@@ -3436,13 +3463,10 @@ async function handleWishlistSubmit(event) {
   }
 
   const formData = new FormData(event.target);
-  const targetMemberId = canManageWishlists()
-    ? cleanText(formData.get('member_id'))
-    : cleanText(state.admin.memberAccount?.memberId);
-  const targetMember = findMemberById(targetMemberId);
+  const targetMember = getLinkedWishlistMember();
 
   if (!targetMember) {
-    setAdminNotice('Choose a valid member before saving the wish list.', 'error');
+    setAdminNotice('Claim your member invite before posting a wish list.', 'error');
     render();
     return;
   }
@@ -3816,7 +3840,7 @@ function buildMemberPayload(formData, currentMember) {
   };
 }
 
-function buildEventPayload(formData) {
+function buildEventPayload(formData, currentEvent = null) {
   const title = cleanText(formData.get('title'));
   const eventDate = cleanText(formData.get('event_date'));
   const eventType = resolveSubmittedEventType(formData.get('event_type'), formData.get('custom_event_type'));
@@ -3824,16 +3848,22 @@ function buildEventPayload(formData) {
   const endTime = normalizeEventTime(formData.get('end_time'));
   const timezone = cleanText(formData.get('timezone')) || DEFAULT_EVENT_TIMEZONE;
   const linkedMember = getLinkedEventMember();
-  const isMemberOwnedEvent = !canManageEvents() && Boolean(linkedMember);
-  const hostName = isMemberOwnedEvent
-    ? cleanText(linkedMember?.facebookName || linkedMember?.displayName)
-    : cleanText(formData.get('host_name'));
+  const canChooseHost = Boolean(canManageEvents() && currentEvent);
+  const hostName = canChooseHost
+    ? cleanText(formData.get('host_name'))
+    : (linkedMember
+        ? cleanText(linkedMember.facebookName || linkedMember.displayName)
+        : cleanText(currentEvent?.hostName));
   const locationText = normalizeNullableText(formData.get('location_text'));
   const details = normalizeNullableText(formData.get('details'));
-  const matchedMember = findMemberByName(hostName);
+  const matchedMember = canChooseHost ? findMemberByName(hostName) : linkedMember;
 
   if (!title) {
     throw new Error('Event title is required.');
+  }
+
+  if (!currentEvent && !linkedMember) {
+    throw new Error('Claim your member invite before posting a new event.');
   }
 
   if (!/^\d{4}-\d{2}-\d{2}$/.test(eventDate)) {
@@ -3856,9 +3886,9 @@ function buildEventPayload(formData) {
     end_time: endTime || null,
     timezone,
     host_name: hostName || null,
-    host_member_id: isMemberOwnedEvent
-      ? (isUuid(linkedMember?.id) ? linkedMember.id : null)
-      : (matchedMember && isUuid(matchedMember.id) ? matchedMember.id : null),
+    host_member_id: canChooseHost
+      ? (matchedMember && isUuid(matchedMember.id) ? matchedMember.id : (isUuid(currentEvent?.hostMemberId) ? currentEvent.hostMemberId : null))
+      : (isUuid(linkedMember?.id) ? linkedMember.id : null),
     location_text: locationText,
     details,
     yes_count: normalizeCountInput(formData.get('yes_count')),
@@ -5060,8 +5090,10 @@ function getLinkedEventMember() {
 
 function getEventEditorFormState() {
   const linkedMember = getLinkedEventMember();
+  const isEditing = Boolean(state.admin.editingEventId);
+  const canKeepCustomHost = Boolean(canManageEvents() && isEditing);
 
-  if (canManageEvents() || !linkedMember) {
+  if (canKeepCustomHost || !linkedMember) {
     return state.admin.eventForm;
   }
 
