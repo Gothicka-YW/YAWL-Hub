@@ -61,6 +61,7 @@ Apply the existing SQL files from the terminal:
 - Helper script, member-owned event setup: `./scripts/apply-supabase-sql.ps1 -Files supabase/12_member_owned_events.sql`
 - Helper script, wish list image/comment setup: `./scripts/apply-supabase-sql.ps1 -Files supabase/13_wishlist_image_uploads_and_comments.sql`
 - Helper script, invite-code account claim setup: `./scripts/apply-supabase-sql.ps1 -Files supabase/14_invite_code_account_claims.sql`
+- Helper script, live launch ownership setup: `./scripts/apply-supabase-sql.ps1 -Files supabase/14_invite_code_account_claims.sql,supabase/migrations/20260512000100_self_owned_posting.sql`
 - Helper script, full ordered set: `./scripts/apply-supabase-sql.ps1 -All`
 - Optional sample event seed: `./scripts/apply-supabase-sql.ps1 -Files supabase/09_seed_sample_event.sql`
 
@@ -75,3 +76,4 @@ Important:
 - The hosted YAWL Hub database likely predates the CLI setup. Use the helper script or `supabase db query --linked -f ...` for the existing top-level SQL files.
 - Use `supabase migration new` for new changes going forward instead of adding more top-level SQL files when possible.
 - If you ever want to baseline the current hosted schema into CLI migration history, start with `supabase db pull <baseline_name>` after linking the project.
+- If you publish the app with GitHub Pages, the expected URL is `https://gothicka-yw.github.io/YAWL-Hub/`. Add that URL in Supabase Auth settings for your hosted project before relying on password-reset or email-confirmation links.

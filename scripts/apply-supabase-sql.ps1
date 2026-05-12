@@ -6,18 +6,32 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-function Get-SupabaseCliPath {
+function Get-SupabaseCliInvocation {
   $command = Get-Command supabase -ErrorAction SilentlyContinue
-  if ($command) {
-    return $command.Source
+  if ($command -and $command.Source) {
+    return @{
+      Command = $command.Source
+      PrefixArgs = @()
+    }
   }
 
   $fallbackPath = Join-Path $env:LOCALAPPDATA 'Programs\SupabaseCLI\supabase.exe'
   if (Test-Path $fallbackPath) {
-    return $fallbackPath
+    return @{
+      Command = $fallbackPath
+      PrefixArgs = @()
+    }
   }
 
-  throw 'Supabase CLI was not found on PATH. Open a new terminal or reinstall the CLI first.'
+  $npxCommand = Get-Command 'npx.cmd' -ErrorAction SilentlyContinue
+  if ($npxCommand -and $npxCommand.Source) {
+    return @{
+      Command = $npxCommand.Source
+      PrefixArgs = @('--yes', 'supabase')
+    }
+  }
+
+  throw 'Supabase CLI was not found on PATH, in the local fallback install location, or via npx.cmd.'
 }
 
 $orderedRepoFiles = @(
@@ -32,7 +46,8 @@ $orderedRepoFiles = @(
   'supabase\11_weekly_wishlists.sql',
   'supabase\12_member_owned_events.sql',
   'supabase\13_wishlist_image_uploads_and_comments.sql',
-  'supabase\14_invite_code_account_claims.sql'
+  'supabase\14_invite_code_account_claims.sql',
+  'supabase\migrations\20260512000100_self_owned_posting.sql'
 )
 
 if ($All) {
@@ -58,7 +73,7 @@ if (-not $Files -or $Files.Count -eq 0) {
 
 $scriptDirectory = Split-Path -Parent $MyInvocation.MyCommand.Path
 $repoRoot = Split-Path -Parent $scriptDirectory
-$supabaseCli = Get-SupabaseCliPath
+$supabaseCli = Get-SupabaseCliInvocation
 
 foreach ($file in $Files) {
   $candidatePath = if ([System.IO.Path]::IsPathRooted($file)) {
@@ -74,7 +89,7 @@ foreach ($file in $Files) {
   $fullPath = (Resolve-Path $candidatePath).Path
   Write-Host ''
   Write-Host ">>> Applying $fullPath"
-  & $supabaseCli db query --linked -f $fullPath --output table
+  & $supabaseCli.Command @($supabaseCli.PrefixArgs + @('db', 'query', '--linked', '-f', $fullPath, '--output', 'table'))
 
   if ($LASTEXITCODE -ne 0) {
     throw "Supabase query failed for $fullPath with exit code $LASTEXITCODE."

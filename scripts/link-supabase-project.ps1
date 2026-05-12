@@ -16,24 +16,38 @@ function Read-PlainTextPassword {
   }
 }
 
-function Get-SupabaseCliPath {
+function Get-SupabaseCliInvocation {
   $command = Get-Command supabase -ErrorAction SilentlyContinue
-  if ($command) {
-    return $command.Source
+  if ($command -and $command.Source) {
+    return @{
+      Command = $command.Source
+      PrefixArgs = @()
+    }
   }
 
   $fallbackPath = Join-Path $env:LOCALAPPDATA 'Programs\SupabaseCLI\supabase.exe'
   if (Test-Path $fallbackPath) {
-    return $fallbackPath
+    return @{
+      Command = $fallbackPath
+      PrefixArgs = @()
+    }
   }
 
-  throw 'Supabase CLI was not found on PATH. Open a new terminal or reinstall the CLI first.'
+  $npxCommand = Get-Command 'npx.cmd' -ErrorAction SilentlyContinue
+  if ($npxCommand -and $npxCommand.Source) {
+    return @{
+      Command = $npxCommand.Source
+      PrefixArgs = @('--yes', 'supabase')
+    }
+  }
+
+  throw 'Supabase CLI was not found on PATH, in the local fallback install location, or via npx.cmd.'
 }
 
 $projectRef = 'lwjueqljcdmdfumjeggn'
 $scriptDirectory = Split-Path -Parent $MyInvocation.MyCommand.Path
 $repoRoot = Split-Path -Parent $scriptDirectory
-$supabaseCli = Get-SupabaseCliPath
+$supabaseCli = Get-SupabaseCliInvocation
 
 if (-not $DatabasePassword) {
   $DatabasePassword = Read-PlainTextPassword
@@ -45,7 +59,7 @@ if (-not $DatabasePassword) {
 
 Push-Location $repoRoot
 try {
-  & $supabaseCli link --project-ref $projectRef -p $DatabasePassword
+  & $supabaseCli.Command @($supabaseCli.PrefixArgs + @('link', '--project-ref', $projectRef, '-p', $DatabasePassword))
 
   if ($LASTEXITCODE -ne 0) {
     throw "Supabase link failed with exit code $LASTEXITCODE."

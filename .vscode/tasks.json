@@ -63,6 +63,23 @@
 			"group": "build"
 		},
 		{
+			"label": "Apply YAWL Live Launch SQL",
+			"type": "shell",
+			"command": "powershell",
+			"args": [
+				"-NoProfile",
+				"-ExecutionPolicy",
+				"Bypass",
+				"-File",
+				".\\scripts\\apply-supabase-sql.ps1",
+				"-Files",
+				"supabase\\14_invite_code_account_claims.sql",
+				"supabase\\migrations\\20260512000100_self_owned_posting.sql"
+			],
+			"isBackground": false,
+			"group": "build"
+		},
+		{
 			"label": "Apply YAWL SQL File(s)",
 			"type": "shell",
 			"command": "powershell",

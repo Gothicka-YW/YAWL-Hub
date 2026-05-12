@@ -1,0 +1,48 @@
+name: Deploy YAWL Hub
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+
+      - name: Stage static site
+        run: |
+          mkdir -p _site/src/data _site/src/lib "_site/Example Wish Lists"
+          cp index.html _site/index.html
+          cp src/config.js _site/src/config.js
+          cp src/main.js _site/src/main.js
+          cp src/styles.css _site/src/styles.css
+          cp src/data/mockData.js _site/src/data/mockData.js
+          cp src/lib/supabase.js _site/src/lib/supabase.js
+          cp -R "Example Wish Lists"/. "_site/Example Wish Lists"/
+          touch _site/.nojekyll
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
