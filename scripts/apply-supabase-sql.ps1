@@ -48,7 +48,8 @@ $orderedRepoFiles = @(
   'supabase\13_wishlist_image_uploads_and_comments.sql',
   'supabase\14_invite_code_account_claims.sql',
   'supabase\migrations\20260512000100_self_owned_posting.sql',
-  'supabase\migrations\20260513000100_giveaways.sql'
+  'supabase\migrations\20260513000100_giveaways.sql',
+  'supabase\migrations\20260513000200_staff_posting_and_giveaway_rerolls.sql'
 )
 
 if ($All) {

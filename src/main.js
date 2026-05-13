@@ -98,6 +98,7 @@ const ADMIN_WISHLIST_FIELD_MAP = {
   thank_you_note: 'thankYouNote',
 };
 const ADMIN_GIVEAWAY_FIELD_MAP = {
+  giver_member_id: 'memberId',
   title: 'title',
   item_text: 'itemText',
   ends_at_local: 'endsAtLocal',
@@ -235,9 +236,24 @@ app.addEventListener('click', async (event) => {
       resetAdminEventEditor();
       render();
       return;
+    case 'wishlist-edit':
+      beginEditingWishlist(memberId);
+      render();
+      scheduleScrollTo('[data-wishlist-form]');
+      return;
     case 'wishlist-reset-form':
       resetWishlistEditor();
       render();
+      return;
+    case 'giveaway-edit':
+      beginEditingGiveaway(giveawayId);
+      render();
+      scheduleScrollTo('[data-giveaway-form]');
+      return;
+    case 'giveaway-reopen':
+      beginEditingGiveaway(giveawayId, { reopen: true });
+      render();
+      scheduleScrollTo('[data-giveaway-form]');
       return;
     case 'giveaway-reset-form':
       resetGiveawayEditor();
@@ -263,6 +279,9 @@ app.addEventListener('click', async (event) => {
       return;
     case 'giveaway-pick-winner':
       await pickGiveawayWinner(giveawayId);
+      return;
+    case 'giveaway-reroll-winner':
+      await rerollGiveawayWinner(giveawayId);
       return;
     case 'giveaway-deactivate':
       await deactivateGiveaway(giveawayId);
@@ -534,8 +553,20 @@ function canManageEvents() {
   return Boolean(state.admin.staffProfile?.isActive && state.admin.staffProfile.canManageEvents);
 }
 
+function canManageWishlistPosts() {
+  return canManageMembers();
+}
+
+function canManageGiveawayPosts() {
+  return canManageMembers() || canManageEvents();
+}
+
 function canPostOwnEvents() {
   return Boolean(getLinkedEventMember());
+}
+
+function canCreateEventPost() {
+  return canManageEvents() || canPostOwnEvents();
 }
 
 function canEditEvent(calendarEvent) {
@@ -569,6 +600,10 @@ function canEditWishlistPost(wishlist) {
     return false;
   }
 
+  if (canManageWishlistPosts()) {
+    return true;
+  }
+
   const linkedMember = getLinkedWishlistMember();
   return Boolean(linkedMember && cleanText(linkedMember.id) === cleanText(wishlist.memberId));
 }
@@ -578,7 +613,7 @@ function canManageGiveaway(giveaway) {
     return false;
   }
 
-  if (canManageMembers() || canManageEvents()) {
+  if (canManageGiveawayPosts()) {
     return true;
   }
 
@@ -855,6 +890,7 @@ function renderWishlistCard(wishlist) {
         <div class="button-row">
           ${wishlist.homeLink ? `<a class="hero-button hero-button--secondary" href="${wishlist.homeLink}" target="_blank" rel="noreferrer">Open Home Link</a>` : ''}
           ${wishlist.imageUrl ? `<a class="hero-button hero-button--secondary" href="${wishlist.imageUrl}" target="_blank" rel="noreferrer">Open Board Image</a>` : ''}
+          ${canEditThisPost ? `<button class="hero-button hero-button--secondary" type="button" data-action="wishlist-edit" data-member-id="${escapeHtml(wishlist.memberId)}">Edit This Board</button>` : ''}
         </div>
         ${renderWishlistComments(wishlist)}
       </div>
@@ -863,6 +899,8 @@ function renderWishlistCard(wishlist) {
 }
 
 function renderWishlistComposer(editorState) {
+  const canManagePosts = canManageWishlistPosts();
+
   if (!state.admin.session) {
     return `
       <article class="panel panel--announcement panel--span-full">
@@ -897,6 +935,20 @@ function renderWishlistComposer(editorState) {
     `;
   }
 
+  if (!editorState.selectedMember) {
+    return `
+      <article class="panel panel--announcement panel--span-full">
+        <div class="panel__heading">
+          <div>
+            <p class="eyebrow">Post Your Wish List</p>
+            <h3>Load the member directory first</h3>
+          </div>
+        </div>
+        <p class="panel-lead">The wish list composer needs an active member record before this post can be assigned.</p>
+      </article>
+    `;
+  }
+
   const form = state.admin.wishlistForm;
   const selectedMember = editorState.selectedMember;
   const isEditingLiveBoard = Boolean(editorState.currentWishlist?.id);
@@ -912,14 +964,28 @@ function renderWishlistComposer(editorState) {
         </div>
         <span class="tag">${escapeHtml(formatWishlistWeekLabel(getCurrentWishlistWeekStartIso()))}</span>
       </div>
-      <p class="panel-lead">Upload a PNG or JPEG of your wish list board. It always posts under your linked member profile, and saving again updates the same weekly post instead of creating a second one.</p>
+      <p class="panel-lead">${escapeHtml(canManagePosts
+        ? 'Staff can post or update the current-week board for any active member. Select the member first, then save the board below.'
+        : 'Upload a PNG or JPEG of your wish list board. It always posts under your linked member profile, and saving again updates the same weekly post instead of creating a second one.')}</p>
       <form class="admin-form wishlist-image-form" data-wishlist-form>
         <div class="form-grid">
-          <label class="field-group">
-            <span>Posting As</span>
-            <input class="text-input" type="text" value="${escapeHtml(selectedMember?.displayName || 'Linked member')}" readonly />
-          </label>
-          <input type="hidden" name="member_id" value="${escapeHtml(form.memberId)}" />
+          ${canManagePosts
+            ? `
+                <label class="field-group">
+                  <span>Posting For</span>
+                  <select class="text-input" name="member_id">
+                    ${renderWishlistMemberOptions(editorState.availableMembers, form.memberId || selectedMember.id)}
+                  </select>
+                  <small class="field-help">Staff can create or update the current-week board for any active member.</small>
+                </label>
+              `
+            : `
+                <label class="field-group">
+                  <span>Posting As</span>
+                  <input class="text-input" type="text" value="${escapeHtml(selectedMember.displayName || 'Linked member')}" readonly />
+                </label>
+                <input type="hidden" name="member_id" value="${escapeHtml(form.memberId)}" />
+              `}
           <label class="field-group field-group--wide wishlist-upload-field">
             <span>Wish List Image</span>
             <input class="text-input" type="file" name="board_image_file" accept="image/png,image/jpeg" />
@@ -1563,8 +1629,11 @@ function renderBirthdays() {
 }
 
 function renderGiveaways() {
+  ensureGiveawayEditorState();
+
   const currentGiveaways = getGiveaways();
   const openCount = currentGiveaways.filter((item) => item.isOpen).length;
+  const editorState = getGiveawayComposerState();
 
   return `
     <section class="panel-grid panel-grid--directory-page">
@@ -1580,7 +1649,7 @@ function renderGiveaways() {
         <p class="panel-lead">Giveaway posts are now live: members can upload an image, set an end date and time, let others react to enter, show every entry publicly, and pick a random winner when the giveaway closes.</p>
       </article>
 
-      ${renderGiveawayComposer()}
+      ${renderGiveawayComposer(editorState)}
 
       <article class="panel panel--directory panel--span-full">
         <div class="panel__heading">
@@ -1604,7 +1673,9 @@ function renderGiveaways() {
   `;
 }
 
-function renderGiveawayComposer() {
+function renderGiveawayComposer(editorState) {
+  const canManagePosts = canManageGiveawayPosts();
+
   if (!state.admin.session) {
     return `
       <article class="panel panel--announcement panel--span-full">
@@ -1623,7 +1694,7 @@ function renderGiveawayComposer() {
     `;
   }
 
-  if (!hasLinkedGiveawayAccess()) {
+  if (!editorState.canEdit) {
     return `
       <article class="panel panel--announcement panel--span-full">
         <div class="panel__heading">
@@ -1641,27 +1712,61 @@ function renderGiveawayComposer() {
     `;
   }
 
-  const linkedMember = getLinkedGiveawayMember();
+  if (!editorState.selectedMember) {
+    return `
+      <article class="panel panel--announcement panel--span-full">
+        <div class="panel__heading">
+          <div>
+            <p class="eyebrow">Post a Giveaway</p>
+            <h3>Load the member directory first</h3>
+          </div>
+        </div>
+        <p class="panel-lead">The giveaway composer needs an active member record before this post can be assigned.</p>
+      </article>
+    `;
+  }
+
+  const selectedMember = editorState.selectedMember;
+  const editingGiveaway = editorState.editingGiveaway;
   const form = state.admin.giveawayForm;
   const isBusy = state.admin.isBusy;
+  const isEditing = Boolean(editingGiveaway?.id);
+  const actionLabel = isBusy ? 'Saving giveaway...' : (isEditing ? 'Save Giveaway' : 'Post Giveaway');
+  const resetLabel = isEditing ? 'Cancel Edit' : 'Clear Form';
 
   return `
     <article class="panel panel--span-full">
       <div class="panel__heading">
         <div>
           <p class="eyebrow">Post a Giveaway</p>
-          <h3>Create a new live giveaway</h3>
+          <h3>${escapeHtml(isEditing ? 'Edit this giveaway' : 'Create a new live giveaway')}</h3>
         </div>
       </div>
-      <p class="panel-lead">Post as your claimed member profile, upload an optional image, set the end date and time, and let members enter from the board below.</p>
+      <p class="panel-lead">${escapeHtml(isEditing
+        ? 'Update the giveaway details below. Saving a future end time reopens a closed giveaway, and leaving the image field alone keeps the current artwork.'
+        : canManagePosts
+          ? 'Staff can post giveaways for any active member and still moderate the board below.'
+          : 'Post as your claimed member profile, upload an optional image, set the end date and time, and let members enter from the board below.')}</p>
       ${renderAdminNotice()}
       <form class="admin-form giveaway-form" data-giveaway-form>
         <div class="form-grid giveaway-form__grid">
-          <label class="field-group">
-            <span>Giving As</span>
-            <input class="text-input" type="text" value="${escapeHtml(formatGiveawayComposerIdentity(linkedMember))}" readonly>
-            <small class="field-help">This post is tied to your claimed member profile.</small>
-          </label>
+          ${canManagePosts && !isEditing
+            ? `
+                <label class="field-group">
+                  <span>Giving For</span>
+                  <select class="text-input" name="giver_member_id">
+                    ${renderWishlistMemberOptions(editorState.availableMembers, form.memberId || selectedMember.id)}
+                  </select>
+                  <small class="field-help">Staff can create a giveaway for any active member.</small>
+                </label>
+              `
+            : `
+                <label class="field-group">
+                  <span>Giving As</span>
+                  <input class="text-input" type="text" value="${escapeHtml(formatGiveawayComposerIdentity(selectedMember))}" readonly>
+                  <small class="field-help">${escapeHtml(canManagePosts ? 'This giveaway is tied to the selected member profile for moderation and winner tracking.' : 'This post is tied to your claimed member profile.')}</small>
+                </label>
+              `}
           <label class="field-group">
             <span>Ends</span>
             <input class="text-input" type="datetime-local" name="ends_at_local" value="${escapeHtml(form.endsAtLocal)}" required>
@@ -1678,25 +1783,25 @@ function renderGiveawayComposer() {
           <label class="field-group giveaway-upload-field">
             <span>Giveaway Image</span>
             <input class="text-input" type="file" name="giveaway_image_file" accept="image/png,image/jpeg">
-            <small class="field-help">Optional. PNG or JPEG, up to ${Math.round(GIVEAWAY_IMAGE_MAX_BYTES / (1024 * 1024))} MB.</small>
+            <small class="field-help">Optional. PNG or JPEG, up to ${Math.round(GIVEAWAY_IMAGE_MAX_BYTES / (1024 * 1024))} MB.${isEditing ? ' Leave this alone to keep the current image.' : ''}</small>
           </label>
           <div class="field-group">
             <span>Preview</span>
-            ${renderGiveawayImagePreview(form)}
+            ${renderGiveawayImagePreview(form, editingGiveaway)}
           </div>
         </div>
         <div class="button-row admin-form-actions giveaway-form__actions">
-          <button class="hero-button" type="submit"${isBusy ? ' disabled' : ''}>${escapeHtml(isBusy ? 'Saving giveaway...' : 'Post Giveaway')}</button>
-          <button class="hero-button hero-button--secondary" type="button" data-action="giveaway-reset-form"${isBusy ? ' disabled' : ''}>Clear Form</button>
+          <button class="hero-button" type="submit"${isBusy ? ' disabled' : ''}>${escapeHtml(actionLabel)}</button>
+          <button class="hero-button hero-button--secondary" type="button" data-action="giveaway-reset-form"${isBusy ? ' disabled' : ''}>${escapeHtml(resetLabel)}</button>
         </div>
       </form>
     </article>
   `;
 }
 
-function renderGiveawayImagePreview(form) {
-  const previewUrl = cleanText(form.imagePreviewUrl);
-  const imageName = cleanText(form.imageName);
+function renderGiveawayImagePreview(form, currentGiveaway = null) {
+  const previewUrl = cleanText(form.imagePreviewUrl) || cleanText(currentGiveaway?.imageUrl);
+  const imageName = cleanText(form.imageName) || cleanText(currentGiveaway?.imageName);
 
   if (!previewUrl) {
     return `
@@ -1824,6 +1929,10 @@ function renderGiveawayActionButtons(giveaway, canManage, currentEntry) {
   const buttons = [];
   const isBusy = state.admin.isBusy ? ' disabled' : '';
 
+  if (canManage) {
+    buttons.push(`<button class="hero-button hero-button--secondary" type="button" data-action="giveaway-edit" data-giveaway-id="${escapeHtml(giveaway.id)}"${isBusy}>Edit Giveaway</button>`);
+  }
+
   if (canManage && giveaway.entryCount > 0) {
     buttons.push(`<button class="hero-button hero-button--secondary" type="button" data-action="giveaway-copy-entrants" data-giveaway-id="${escapeHtml(giveaway.id)}"${isBusy}>Copy Entrants</button>`);
   }
@@ -1832,7 +1941,15 @@ function renderGiveawayActionButtons(giveaway, canManage, currentEntry) {
     buttons.push(`<button class="hero-button" type="button" data-action="giveaway-pick-winner" data-giveaway-id="${escapeHtml(giveaway.id)}"${isBusy}>Pick Random Winner</button>`);
   }
 
-  if (canManage && giveaway.isActive) {
+  if (canManage && giveaway.hasWinner && giveaway.entryCount > 1) {
+    buttons.push(`<button class="hero-button" type="button" data-action="giveaway-reroll-winner" data-giveaway-id="${escapeHtml(giveaway.id)}"${isBusy}>Reroll Winner</button>`);
+  }
+
+  if (canManage && !giveaway.isOpen && !giveaway.hasWinner) {
+    buttons.push(`<button class="hero-button hero-button--secondary" type="button" data-action="giveaway-reopen" data-giveaway-id="${escapeHtml(giveaway.id)}"${isBusy}>Reopen Giveaway</button>`);
+  }
+
+  if (canManage && giveaway.isOpen) {
     buttons.push(`<button class="hero-button hero-button--secondary" type="button" data-action="giveaway-deactivate" data-giveaway-id="${escapeHtml(giveaway.id)}"${isBusy}>Close Giveaway</button>`);
   }
 
@@ -1878,7 +1995,7 @@ function renderEventComposerPanel(currentMembers) {
     ? getEvents().find((entry) => entry.id === state.admin.editingEventId)
     : null;
 
-  if ((editingEvent && canEditEvent(editingEvent)) || canPostOwnEvents()) {
+  if ((editingEvent && canEditEvent(editingEvent)) || canCreateEventPost()) {
     return renderAdminEventEditorPanel(currentMembers, { context: 'events' });
   }
 
@@ -2436,7 +2553,7 @@ function renderAdminEventEditorPanel(currentMembers, options = {}) {
   const isEventsContext = context === 'events';
   const linkedMember = getLinkedEventMember();
   const postingMemberName = cleanText(linkedMember?.facebookName || linkedMember?.displayName);
-  const canChooseHost = Boolean(context === 'admin' && canManageEvents() && isEditing);
+  const canChooseHost = Boolean(canManageEvents());
   const hostName = canChooseHost
     ? cleanText(form.hostName)
     : cleanText(form.hostName) || postingMemberName;
@@ -2448,12 +2565,14 @@ function renderAdminEventEditorPanel(currentMembers, options = {}) {
     ? (isEditing ? 'Editing your event' : 'Shared calendar')
     : (isEditing ? 'Editing live event' : 'Shared calendar');
   const panelLead = canChooseHost
-    ? 'Staff can update existing shared events here. New event posts are still locked to the signed-in member profile.'
+    ? (isEditing
+        ? 'Staff can update this event and keep it aligned with the right active member profile.'
+        : 'Staff can post or moderate shared events for any active member right from this editor.')
     : (isEditing
         ? 'This event stays linked to its original poster while you update the details.'
         : `New event posts always publish as ${postingMemberName || 'your linked member profile'} and stay editable by the person who created them.`);
 
-  if (!isEditing && context === 'admin' && !linkedMember) {
+  if (!isEditing && context === 'admin' && !linkedMember && !canManageEvents()) {
     return `
       <article class="panel">
         <div class="panel__heading">
@@ -2519,7 +2638,7 @@ function renderAdminEventEditorPanel(currentMembers, options = {}) {
           <label class="field-group">
             <span>Host</span>
             <input class="text-input" type="text" name="host_name" value="${escapeHtml(hostName)}" ${canChooseHost ? 'list="event-host-options" placeholder="Nova June"' : 'readonly'} />
-            <small class="field-help">${escapeHtml(canChooseHost ? 'Staff can correct the host name while editing an existing event.' : (postingMemberName ? 'New event posts stay locked to your claimed member profile.' : 'This event keeps the original host while you edit the rest of the details.'))}</small>
+            <small class="field-help">${escapeHtml(canChooseHost ? 'Choose the active member profile that should own this event post.' : (postingMemberName ? 'New event posts stay locked to your claimed member profile.' : 'This event keeps the original host while you edit the rest of the details.'))}</small>
           </label>
           <label class="field-group">
             <span>Location</span>
@@ -2556,7 +2675,7 @@ function renderAdminEventEditorPanel(currentMembers, options = {}) {
           <button class="hero-button hero-button--secondary" type="button" data-action="admin-reset-event-form">${escapeHtml(isEditing ? 'Cancel Edit' : 'Clear Form')}</button>
         </div>
       </form>
-      <p class="muted">${escapeHtml(canChooseHost ? 'Staff can manage the live shared calendar here. Old events should be deactivated instead of hard deleted.' : 'New event posts stay tied to the logged-in member account. Staff can still moderate existing events when needed.')}</p>
+      <p class="muted">${escapeHtml(canChooseHost ? 'Staff can post or moderate the live shared calendar here. Old events should be deactivated instead of hard deleted.' : 'New event posts stay tied to the logged-in member account. Staff can still moderate existing events when needed.')}</p>
     </article>
   `;
 }
@@ -2774,7 +2893,7 @@ function getCurrentWeekWishlistForMember(memberId) {
 
 function getWishlistEditorMembers() {
   const linkedMember = getLinkedWishlistMember();
-  return linkedMember ? [linkedMember] : [];
+  return canManageWishlistPosts() ? getMembers() : (linkedMember ? [linkedMember] : []);
 }
 
 function getLinkedWishlistMember() {
@@ -2783,6 +2902,11 @@ function getLinkedWishlistMember() {
 
 function getLinkedGiveawayMember() {
   return getLinkedWishlistMember();
+}
+
+function getGiveawayEditorMembers() {
+  const linkedMember = getLinkedGiveawayMember();
+  return canManageGiveawayPosts() ? getMembers() : (linkedMember ? [linkedMember] : []);
 }
 
 function hasLinkedGiveawayAccess() {
@@ -2794,7 +2918,7 @@ function getWishlistEditorState() {
   const selectedMember = findMemberById(state.admin.wishlistForm.memberId) || availableMembers[0] || null;
 
   return {
-    canEdit: hasLinkedWishlistAccess(),
+    canEdit: canManageWishlistPosts() || hasLinkedWishlistAccess(),
     availableMembers,
     selectedMember,
     currentWishlist: selectedMember ? getCurrentWeekWishlistForMember(selectedMember.id) : null,
@@ -2822,6 +2946,46 @@ function loadWishlistFormForMember(memberId) {
   const currentWishlist = getCurrentWeekWishlistForMember(normalizedMemberId);
   revokeWishlistPreviewUrl(state.admin.wishlistForm.boardImagePreviewUrl);
   state.admin.wishlistForm = createEmptyWishlistForm(currentWishlist, normalizedMemberId);
+}
+
+function getGiveawayComposerState() {
+  const availableMembers = getGiveawayEditorMembers();
+  const editingGiveaway = state.admin.editingGiveawayId
+    ? getGiveaways().find((entry) => entry.id === state.admin.editingGiveawayId)
+    : null;
+  const selectedMember = findMemberById(state.admin.giveawayForm.memberId)
+    || (editingGiveaway ? findMemberById(editingGiveaway.giverMemberId) : null)
+    || availableMembers[0]
+    || null;
+
+  return {
+    canEdit: canManageGiveawayPosts() || hasLinkedGiveawayAccess(),
+    availableMembers,
+    selectedMember,
+    editingGiveaway,
+  };
+}
+
+function ensureGiveawayEditorState() {
+  const availableMembers = getGiveawayEditorMembers();
+
+  if (!availableMembers.length) {
+    return;
+  }
+
+  const selectedMemberId = cleanText(state.admin.giveawayForm.memberId);
+
+  if (availableMembers.some((member) => member.id === selectedMemberId)) {
+    return;
+  }
+
+  loadGiveawayFormForMember(availableMembers[0].id);
+}
+
+function loadGiveawayFormForMember(memberId, giveaway = null) {
+  const normalizedMemberId = cleanText(memberId);
+  revokeGiveawayPreviewUrl(state.admin.giveawayForm.imagePreviewUrl);
+  state.admin.giveawayForm = createEmptyGiveawayForm(giveaway, normalizedMemberId);
 }
 
 function renderWishlistSourceNotice() {
@@ -3170,6 +3334,7 @@ function createDefaultAdminState() {
     form: createEmptyMemberForm(),
     editingEventId: '',
     eventForm: createEmptyEventForm(),
+    editingGiveawayId: '',
   };
 }
 
@@ -3266,11 +3431,12 @@ function createEmptyEventForm(calendarEvent = null) {
   };
 }
 
-function createEmptyGiveawayForm(giveaway = null) {
+function createEmptyGiveawayForm(giveaway = null, memberId = '') {
   return {
+    memberId: cleanText(memberId || giveaway?.giverMemberId),
     title: cleanText(giveaway?.title),
     itemText: cleanText(giveaway?.itemText),
-    endsAtLocal: cleanText(giveaway?.endsAtLocal) || createDefaultGiveawayEndsAtLocal(),
+    endsAtLocal: cleanText(giveaway?.endsAtLocal) || formatIsoDateTimeLocalInput(giveaway?.endsAt) || createDefaultGiveawayEndsAtLocal(),
     imageFile: null,
     imagePreviewUrl: '',
     imageName: cleanText(giveaway?.imageName),
@@ -3611,6 +3777,53 @@ function beginEditingEvent(eventId) {
   setAdminNotice(`Editing ${calendarEvent.title}.`, 'muted');
 }
 
+function beginEditingWishlist(memberId) {
+  const wishlist = getCurrentWeekWishlistForMember(memberId);
+
+  if (!wishlist) {
+    setAdminNotice('That wish list could not be found.', 'error');
+    return;
+  }
+
+  if (!canEditWishlistPost(wishlist)) {
+    setAdminNotice('You can update only your own wish list unless you have staff access.', 'error');
+    return;
+  }
+
+  loadWishlistFormForMember(wishlist.memberId);
+  setAdminNotice(`Editing ${wishlist.memberName}'s current-week wish list.`, 'muted');
+}
+
+function beginEditingGiveaway(giveawayId, options = {}) {
+  const giveaway = getGiveaways().find((entry) => entry.id === cleanText(giveawayId));
+
+  if (!giveaway) {
+    setAdminNotice('That giveaway could not be found.', 'error');
+    return;
+  }
+
+  if (!canManageGiveaway(giveaway)) {
+    setAdminNotice('Only the giveaway creator or staff can edit this giveaway.', 'error');
+    return;
+  }
+
+  const nextForm = createEmptyGiveawayForm(giveaway, giveaway.giverMemberId);
+
+  if (options.reopen && !giveaway.hasWinner) {
+    nextForm.endsAtLocal = createDefaultGiveawayEndsAtLocal();
+  }
+
+  revokeGiveawayPreviewUrl(state.admin.giveawayForm.imagePreviewUrl);
+  state.admin.editingGiveawayId = giveaway.id;
+  state.admin.giveawayForm = nextForm;
+  setAdminNotice(
+    options.reopen && !giveaway.hasWinner
+      ? `Adjust the end time and save to reopen ${giveaway.title}.`
+      : `Editing ${giveaway.title}.`,
+    'muted',
+  );
+}
+
 function resetAdminEventEditor() {
   state.admin.editingEventId = '';
   state.admin.eventForm = createEmptyEventForm();
@@ -3627,8 +3840,12 @@ function resetWishlistEditor() {
 }
 
 function resetGiveawayEditor() {
+  const fallbackMember = getGiveawayEditorMembers()[0] || null;
+  const fallbackMemberId = cleanText(fallbackMember?.id);
+
   revokeGiveawayPreviewUrl(state.admin.giveawayForm.imagePreviewUrl);
-  state.admin.giveawayForm = createEmptyGiveawayForm();
+  state.admin.editingGiveawayId = '';
+  state.admin.giveawayForm = createEmptyGiveawayForm(null, fallbackMemberId);
   setAdminNotice('Giveaway form reset.', 'muted');
 }
 
@@ -3759,6 +3976,12 @@ function syncWishlistDraftField(target) {
 
 function syncGiveawayDraftField(target) {
   if (!(target instanceof Element) || !target.name) {
+    return;
+  }
+
+  if (target.name === 'giver_member_id') {
+    syncAdminDraftState('giveawayForm', ADMIN_GIVEAWAY_FIELD_MAP, target);
+    render();
     return;
   }
 
@@ -3980,8 +4203,8 @@ async function handleAdminEventSubmit(event) {
     return;
   }
 
-  if (!currentEvent && !canPostOwnEvents()) {
-    setAdminNotice('Claim your member invite before posting a new event.', 'error');
+  if (!currentEvent && !canCreateEventPost()) {
+    setAdminNotice('Claim your member invite or use an event manager account before posting a new event.', 'error');
     render();
     return;
   }
@@ -4049,10 +4272,13 @@ async function handleWishlistSubmit(event) {
   }
 
   const formData = new FormData(event.target);
-  const targetMember = getLinkedWishlistMember();
+  const targetMemberId = canManageWishlistPosts()
+    ? cleanText(formData.get('member_id'))
+    : cleanText(getLinkedWishlistMember()?.id);
+  const targetMember = findMemberById(targetMemberId);
 
   if (!targetMember) {
-    setAdminNotice('Claim your member invite before posting a wish list.', 'error');
+    setAdminNotice(canManageWishlistPosts() ? 'Choose a member before posting a wish list.' : 'Claim your member invite before posting a wish list.', 'error');
     render();
     return;
   }
@@ -4127,40 +4353,82 @@ async function handleGiveawaySubmit(event) {
     return;
   }
 
-  const linkedMember = getLinkedGiveawayMember();
+  const editorState = getGiveawayComposerState();
+  const editingGiveaway = state.admin.editingGiveawayId
+    ? getGiveaways().find((entry) => entry.id === state.admin.editingGiveawayId)
+    : null;
 
-  if (!linkedMember) {
+  if (state.admin.editingGiveawayId && !editingGiveaway) {
+    setAdminNotice('That giveaway could not be found.', 'error');
+    render();
+    return;
+  }
+
+  if (!editorState.canEdit) {
     setAdminNotice('Claim your member invite before posting a giveaway.', 'error');
     render();
     return;
   }
 
   const formData = new FormData(event.target);
+  const targetMemberId = state.admin.editingGiveawayId
+    ? cleanText(state.admin.giveawayForm.memberId)
+    : (canManageGiveawayPosts() ? cleanText(formData.get('giver_member_id')) : cleanText(getLinkedGiveawayMember()?.id));
+  const targetMember = findMemberById(targetMemberId);
+
+  if (!targetMember) {
+    setAdminNotice(canManageGiveawayPosts() ? 'Choose a member before posting a giveaway.' : 'Claim your member invite before posting a giveaway.', 'error');
+    render();
+    return;
+  }
+
   const selectedImageFile = state.admin.giveawayForm.imageFile;
+  const wasEditing = Boolean(state.admin.editingGiveawayId);
 
   state.admin.isBusy = true;
-  setAdminNotice(selectedImageFile ? 'Uploading giveaway image...' : 'Posting giveaway...', 'muted');
+  setAdminNotice(
+    selectedImageFile
+      ? 'Uploading giveaway image...'
+      : (wasEditing ? 'Saving giveaway...' : 'Posting giveaway...'),
+    'muted',
+  );
   render();
 
   try {
-    const payload = buildGiveawayPayload(formData, linkedMember);
+    const payload = buildGiveawayPayload(formData, targetMember);
     const imageUpload = selectedImageFile
-      ? await uploadGiveawayImageFile(selectedImageFile, linkedMember, payload.ends_at)
+      ? await uploadGiveawayImageFile(selectedImageFile, targetMember, payload.ends_at)
       : null;
-    const response = await supabaseFetch('giveaways', {
-      method: 'POST',
-      useSession: true,
-      headers: {
-        Prefer: 'return=representation',
-      },
-      body: {
-        ...payload,
-        image_url: normalizeNullableText(imageUpload?.publicUrl),
-        image_path: normalizeNullableText(imageUpload?.path),
-        image_mime_type: normalizeNullableText(imageUpload?.mimeType),
-        image_name: normalizeNullableText(imageUpload?.name),
-      },
-    });
+    const response = wasEditing
+      ? await supabaseFetch('giveaways', {
+          method: 'PATCH',
+          query: new URLSearchParams({ id: `eq.${state.admin.editingGiveawayId}` }).toString(),
+          useSession: true,
+          headers: {
+            Prefer: 'return=representation',
+          },
+          body: {
+            ...payload,
+            image_url: normalizeNullableText(imageUpload?.publicUrl || editingGiveaway?.imageUrl),
+            image_path: normalizeNullableText(imageUpload?.path || editingGiveaway?.imagePath),
+            image_mime_type: normalizeNullableText(imageUpload?.mimeType || editingGiveaway?.imageMimeType),
+            image_name: normalizeNullableText(imageUpload?.name || editingGiveaway?.imageName),
+          },
+        })
+      : await supabaseFetch('giveaways', {
+          method: 'POST',
+          useSession: true,
+          headers: {
+            Prefer: 'return=representation',
+          },
+          body: {
+            ...payload,
+            image_url: normalizeNullableText(imageUpload?.publicUrl),
+            image_path: normalizeNullableText(imageUpload?.path),
+            image_mime_type: normalizeNullableText(imageUpload?.mimeType),
+            image_name: normalizeNullableText(imageUpload?.name),
+          },
+        });
 
     if (!response.ok) {
       throw new Error(await getSupabaseErrorMessage(response, 'giveaway-write'));
@@ -4171,9 +4439,10 @@ async function handleGiveawaySubmit(event) {
     const savedTitle = cleanText(savedRow?.title) || payload.title;
 
     revokeGiveawayPreviewUrl(state.admin.giveawayForm.imagePreviewUrl);
-    state.admin.giveawayForm = createEmptyGiveawayForm();
+    state.admin.editingGiveawayId = '';
+    state.admin.giveawayForm = createEmptyGiveawayForm(null, cleanText(getGiveawayEditorMembers()[0]?.id));
     await loadLiveGiveaways();
-    setAdminNotice(`${savedTitle} is now live on the giveaway board.`, 'success');
+    setAdminNotice(wasEditing ? `${savedTitle} was updated.` : `${savedTitle} is now live on the giveaway board.`, 'success');
   } catch (error) {
     setAdminNotice(error instanceof Error ? error.message : 'Could not post that giveaway.', 'error');
   } finally {
@@ -4350,6 +4619,64 @@ async function pickGiveawayWinner(giveawayId) {
     setAdminNotice(`${winnerName} was picked for ${giveaway.title}.`, 'success');
   } catch (error) {
     setAdminNotice(error instanceof Error ? error.message : 'Could not pick a winner for that giveaway.', 'error');
+  } finally {
+    state.admin.isBusy = false;
+    render();
+  }
+}
+
+async function rerollGiveawayWinner(giveawayId) {
+  const giveaway = getGiveaways().find((entry) => entry.id === cleanText(giveawayId));
+
+  if (!giveaway) {
+    setAdminNotice('That giveaway could not be found.', 'error');
+    render();
+    return;
+  }
+
+  if (!canManageGiveaway(giveaway)) {
+    setAdminNotice('Only the giveaway creator or staff can reroll a winner.', 'error');
+    render();
+    return;
+  }
+
+  if (!giveaway.hasWinner) {
+    setAdminNotice('Pick the first winner before rerolling this giveaway.', 'error');
+    render();
+    return;
+  }
+
+  if (giveaway.entryCount < 2) {
+    setAdminNotice('Add at least two entries before rerolling the winner.', 'error');
+    render();
+    return;
+  }
+
+  state.admin.isBusy = true;
+  setAdminNotice('Rerolling the giveaway winner...', 'muted');
+  render();
+
+  try {
+    const response = await supabaseFetch('rpc/reroll_giveaway_winner', {
+      method: 'POST',
+      useSession: true,
+      body: {
+        p_giveaway_id: giveaway.id,
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error(await getSupabaseErrorMessage(response, 'giveaway-winner'));
+    }
+
+    const rows = await response.json();
+    const savedRow = Array.isArray(rows) ? rows[0] : rows;
+    const winnerName = cleanText(savedRow?.winner_name_snapshot) || 'Winner selected';
+
+    await loadLiveGiveaways();
+    setAdminNotice(`${winnerName} was rerolled for ${giveaway.title}.`, 'success');
+  } catch (error) {
+    setAdminNotice(error instanceof Error ? error.message : 'Could not reroll the winner for that giveaway.', 'error');
   } finally {
     state.admin.isBusy = false;
     render();
@@ -4669,7 +4996,7 @@ async function deactivateGiveaway(giveawayId) {
         Prefer: 'return=representation',
       },
       body: {
-        is_active: false,
+        ends_at: new Date().toISOString(),
       },
     });
 
@@ -4720,7 +5047,7 @@ function buildEventPayload(formData, currentEvent = null) {
   const endTime = normalizeEventTime(formData.get('end_time'));
   const timezone = cleanText(formData.get('timezone')) || DEFAULT_EVENT_TIMEZONE;
   const linkedMember = getLinkedEventMember();
-  const canChooseHost = Boolean(canManageEvents() && currentEvent);
+  const canChooseHost = canManageEvents();
   const hostName = canChooseHost
     ? cleanText(formData.get('host_name'))
     : (linkedMember
@@ -4734,8 +5061,12 @@ function buildEventPayload(formData, currentEvent = null) {
     throw new Error('Event title is required.');
   }
 
-  if (!currentEvent && !linkedMember) {
+  if (!currentEvent && !linkedMember && !canChooseHost) {
     throw new Error('Claim your member invite before posting a new event.');
+  }
+
+  if (canChooseHost && !matchedMember && !currentEvent) {
+    throw new Error('Choose a valid member name for the event host.');
   }
 
   if (!/^\d{4}-\d{2}-\d{2}$/.test(eventDate)) {
@@ -6268,6 +6599,22 @@ function createDefaultGiveawayEndsAtLocal(now = new Date()) {
   return formatDateTimeLocalInput(next);
 }
 
+function formatIsoDateTimeLocalInput(value) {
+  const normalizedValue = cleanText(value);
+
+  if (!normalizedValue) {
+    return '';
+  }
+
+  const parsedDate = new Date(normalizedValue);
+
+  if (Number.isNaN(parsedDate.getTime())) {
+    return '';
+  }
+
+  return formatDateTimeLocalInput(parsedDate);
+}
+
 function formatDateTimeLocalInput(date) {
   if (!(date instanceof Date) || Number.isNaN(date.getTime())) {
     return '';
@@ -6521,8 +6868,7 @@ function getLinkedEventMember() {
 
 function getEventEditorFormState() {
   const linkedMember = getLinkedEventMember();
-  const isEditing = Boolean(state.admin.editingEventId);
-  const canKeepCustomHost = Boolean(canManageEvents() && isEditing);
+  const canKeepCustomHost = canManageEvents();
 
   if (canKeepCustomHost || !linkedMember) {
     return state.admin.eventForm;
