@@ -1585,9 +1585,9 @@ function renderEventCard(calendarEvent, options = {}) {
   const primaryMetaValue = isBirthdayCard
     ? (calendarEvent.hostName || calendarEvent.title)
     : (calendarEvent.hostName || 'Host coming soon');
-  const secondaryMetaLabel = isBirthdayCard ? 'Birthday' : 'Location';
+  const secondaryMetaLabel = isBirthdayCard ? 'YoWorld Name' : 'Location';
   const secondaryMetaValue = isBirthdayCard
-    ? (calendarEvent.birthdayLabel || formatEventDateLabel(calendarEvent.eventDate) || 'Birthday coming soon')
+    ? (calendarEvent.inGameName || 'Not added yet')
     : (calendarEvent.locationText || 'Location coming soon');
   const footerContent = isBirthdayCard
     ? `
@@ -5412,6 +5412,7 @@ function createBirthdayCalendarEntry(member, year, eventDateOverride = '') {
     timezone: '',
     whenLabel: formatEventDateLabel(eventDate),
     hostName: birthdayName,
+    inGameName: cleanText(member.inGameName),
     hostMemberId: cleanText(member.id),
     createdByUserId: '',
     createdByEmail: '',
