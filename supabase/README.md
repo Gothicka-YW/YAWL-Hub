@@ -20,7 +20,8 @@ Use these files in order:
 16. Push the self-owned posting migration in `supabase/migrations/20260512000100_self_owned_posting.sql` after `14_invite_code_account_claims.sql` if wish lists and new events should be locked to the signed-in member profile.
 17. Push `supabase/migrations/20260513000100_giveaways.sql` after the self-owned posting migration to add live giveaways, entrant reactions, image uploads, and the random winner picker.
 18. Push `supabase/migrations/20260513000200_staff_posting_and_giveaway_rerolls.sql` after the giveaways migration if staff should also be able to post shared wish lists, events, and giveaways, and if giveaway winners should support rerolls.
-19. Create or sign in to a Supabase Auth account that uses the same email as your `staff_permissions` row.
+19. Push `supabase/migrations/20260513000300_winner_closes_giveaway.sql` after the reroll migration so winner selection also stamps the giveaway closed immediately.
+20. Create or sign in to a Supabase Auth account that uses the same email as your `staff_permissions` row.
 
 Notes:
 
@@ -45,6 +46,7 @@ Notes:
 - `supabase/migrations/20260512000100_self_owned_posting.sql` locks new wish list and event posts to the signed-in member profile while still allowing staff to moderate existing event posts.
 - `supabase/migrations/20260513000100_giveaways.sql` adds live giveaways, public entrant lists, the giveaway image bucket, and a server-side random winner picker for creators and staff.
 - `supabase/migrations/20260513000200_staff_posting_and_giveaway_rerolls.sql` reopens staff posting access for shared posts after the self-owned launch migration and adds the giveaway reroll RPC.
+- `supabase/migrations/20260513000300_winner_closes_giveaway.sql` updates the winner RPCs so the selected winner is posted and the giveaway is stamped closed at the same moment.
 
 ## Supabase CLI Workflow
 
@@ -68,6 +70,7 @@ Apply the existing SQL files from the terminal:
 - Helper script, live launch ownership setup: `./scripts/apply-supabase-sql.ps1 -Files supabase/14_invite_code_account_claims.sql,supabase/migrations/20260512000100_self_owned_posting.sql`
 - Helper script, giveaways setup: `./scripts/apply-supabase-sql.ps1 -Files supabase/migrations/20260513000100_giveaways.sql`
 - Helper script, staff posting + giveaway rerolls: `./scripts/apply-supabase-sql.ps1 -Files supabase/migrations/20260513000200_staff_posting_and_giveaway_rerolls.sql`
+- Helper script, winner closes giveaway: `./scripts/apply-supabase-sql.ps1 -Files supabase/migrations/20260513000300_winner_closes_giveaway.sql`
 - Helper script, full ordered set: `./scripts/apply-supabase-sql.ps1 -All`
 - Optional sample event seed: `./scripts/apply-supabase-sql.ps1 -Files supabase/09_seed_sample_event.sql`
 

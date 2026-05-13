@@ -1646,7 +1646,7 @@ function renderGiveaways() {
           </div>
           <span class="tag">${escapeHtml(`${openCount} open`)}</span>
         </div>
-        <p class="panel-lead">Giveaway posts are now live: members can upload an image, set an end date and time, let others react to enter, show every entry publicly, and pick a random winner when the giveaway closes.</p>
+        <p class="panel-lead">Giveaway posts are now live: hosts can upload an image, set an end date and time, members can use Enter Giveaway on open cards, and the winner can be posted publicly when the giveaway closes.</p>
       </article>
 
       ${renderGiveawayComposer(editorState)}
@@ -1685,7 +1685,7 @@ function renderGiveawayComposer(editorState) {
             <h3>Sign in before posting or entering</h3>
           </div>
         </div>
-        <p class="panel-lead">Giveaways use your YAWL Hub account so the giver and entrant list stay tied to the correct member profile.</p>
+        <p class="panel-lead">Giveaways use your YAWL Hub account so the host and entrant list stay tied to the correct member profile.</p>
         ${renderAdminNotice()}
         <div class="button-row">
           <button class="hero-button" type="button" data-section="account">Open Account</button>
@@ -1753,18 +1753,18 @@ function renderGiveawayComposer(editorState) {
           ${canManagePosts && !isEditing
             ? `
                 <label class="field-group">
-                  <span>Giving For</span>
+                  <span>Host</span>
                   <select class="text-input" name="giver_member_id">
                     ${renderWishlistMemberOptions(editorState.availableMembers, form.memberId || selectedMember.id)}
                   </select>
-                  <small class="field-help">Staff can create a giveaway for any active member.</small>
+                  <small class="field-help">Staff can host a giveaway for any active member.</small>
                 </label>
               `
             : `
                 <label class="field-group">
-                  <span>Giving As</span>
+                  <span>Host</span>
                   <input class="text-input" type="text" value="${escapeHtml(formatGiveawayComposerIdentity(selectedMember))}" readonly>
-                  <small class="field-help">${escapeHtml(canManagePosts ? 'This giveaway is tied to the selected member profile for moderation and winner tracking.' : 'This post is tied to your claimed member profile.')}</small>
+                  <small class="field-help">${escapeHtml(canManagePosts ? 'This giveaway is tied to the selected member profile for moderation and winner tracking.' : 'This giveaway is tied to your claimed member profile.')}</small>
                 </label>
               `}
           <label class="field-group">
@@ -1785,9 +1785,12 @@ function renderGiveawayComposer(editorState) {
             <input class="text-input" type="file" name="giveaway_image_file" accept="image/png,image/jpeg">
             <small class="field-help">Optional. PNG or JPEG, up to ${Math.round(GIVEAWAY_IMAGE_MAX_BYTES / (1024 * 1024))} MB.${isEditing ? ' Leave this alone to keep the current image.' : ''}</small>
           </label>
-          <div class="field-group">
+          <div class="field-group field-group--wide">
             <span>Preview</span>
-            ${renderGiveawayImagePreview(form, editingGiveaway)}
+            <small class="field-help">This updates before you post so you can see the live board card first.</small>
+            <div data-giveaway-preview>
+              ${renderGiveawayComposerPreview(editorState)}
+            </div>
           </div>
         </div>
         <div class="button-row admin-form-actions giveaway-form__actions">
@@ -1797,6 +1800,70 @@ function renderGiveawayComposer(editorState) {
       </form>
     </article>
   `;
+}
+
+function renderGiveawayComposerPreview(editorState) {
+  const previewGiveaway = buildGiveawayComposerPreviewModel(editorState);
+
+  if (!previewGiveaway) {
+    return `
+      <div class="giveaway-image-preview">
+        <div class="giveaway-card__placeholder">
+          <strong>Preview unavailable</strong>
+          <span>Pick a host first so the giveaway card preview can load.</span>
+        </div>
+      </div>
+    `;
+  }
+
+  return `
+    <div class="giveaway-composer-preview">
+      <span class="muted">Live giveaway card preview</span>
+      ${renderGiveawayCard(previewGiveaway, { isPreview: true })}
+    </div>
+  `;
+}
+
+function buildGiveawayComposerPreviewModel(editorState) {
+  const form = state.admin.giveawayForm;
+  const editingGiveaway = editorState?.editingGiveaway || null;
+  const previewHost = findMemberById(form.memberId) || editorState?.selectedMember || null;
+
+  if (!previewHost) {
+    return null;
+  }
+
+  const defaultEndsAt = parseDateTimeLocalInputToIso(createDefaultGiveawayEndsAtLocal());
+  const endsAt = parseDateTimeLocalInputToIso(form.endsAtLocal) || cleanText(editingGiveaway?.endsAt) || defaultEndsAt;
+  const nowIso = new Date().toISOString();
+
+  return buildGiveawayModel(
+    {
+      id: cleanText(editingGiveaway?.id) || 'giveaway-preview',
+      giverMemberId: cleanText(previewHost.id),
+      giverName: cleanText(previewHost.facebookName || previewHost.displayName),
+      giverInGameName: cleanText(previewHost.inGameName),
+      giverHomeLink: buildHomeLink(previewHost.houseKey),
+      title: cleanText(form.title) || cleanText(editingGiveaway?.title) || 'Giveaway title preview',
+      itemText: cleanText(form.itemText) || cleanText(editingGiveaway?.itemText) || 'Describe the item or bundle, any entry notes, and anything members should know.',
+      imageUrl: cleanText(form.imagePreviewUrl) || cleanText(editingGiveaway?.imageUrl),
+      imagePath: cleanText(form.imagePath) || cleanText(editingGiveaway?.imagePath),
+      imageMimeType: cleanText(form.imageMimeType) || cleanText(editingGiveaway?.imageMimeType),
+      imageName: cleanText(form.imageName) || cleanText(editingGiveaway?.imageName),
+      endsAt,
+      winnerMemberId: cleanText(editingGiveaway?.winnerMemberId),
+      winnerName: cleanText(editingGiveaway?.winnerName),
+      winnerInGameName: cleanText(editingGiveaway?.winnerInGameName),
+      winnerSelectedAt: cleanText(editingGiveaway?.winnerSelectedAt),
+      isActive: editingGiveaway ? editingGiveaway.isActive : true,
+      entries: Array.isArray(editingGiveaway?.entries) ? editingGiveaway.entries : [],
+      createdAt: cleanText(editingGiveaway?.createdAt) || nowIso,
+      updatedAt: nowIso,
+      createdByUserId: cleanText(editingGiveaway?.createdByUserId),
+      createdByEmail: cleanText(editingGiveaway?.createdByEmail),
+    },
+    0,
+  );
 }
 
 function renderGiveawayImagePreview(form, currentGiveaway = null) {
@@ -1822,9 +1889,10 @@ function renderGiveawayImagePreview(form, currentGiveaway = null) {
   `;
 }
 
-function renderGiveawayCard(giveaway) {
-  const canManage = canManageGiveaway(giveaway);
-  const linkedMember = getLinkedGiveawayMember();
+function renderGiveawayCard(giveaway, options = {}) {
+  const { isPreview = false } = options;
+  const canManage = isPreview ? false : canManageGiveaway(giveaway);
+  const linkedMember = isPreview ? null : getLinkedGiveawayMember();
   const currentEntry = linkedMember ? getGiveawayEntryForMember(giveaway, linkedMember.id) : null;
 
   return `
@@ -1843,7 +1911,7 @@ function renderGiveawayCard(giveaway) {
         <p class="panel-lead">${escapeHtml(giveaway.itemText)}</p>
         <div class="event-meta giveaway-meta">
           <div class="event-meta-row">
-            <strong>Given by</strong>
+            <strong>Host</strong>
             <span>${escapeHtml(formatGiveawayGiverLine(giveaway))}</span>
           </div>
           <div class="event-meta-row">
@@ -1859,8 +1927,8 @@ function renderGiveawayCard(giveaway) {
         ${giveaway.hasWinner ? renderGiveawayWinnerBanner(giveaway) : ''}
         ${renderGiveawayEntries(giveaway)}
         <div class="button-row giveaway-card__actions">
-          ${giveaway.giverHomeLink ? `<a class="hero-button hero-button--secondary" href="${giveaway.giverHomeLink}" target="_blank" rel="noreferrer">Open Giver Home</a>` : ''}
-          ${renderGiveawayActionButtons(giveaway, canManage, currentEntry)}
+          ${!isPreview && giveaway.giverHomeLink ? `<a class="hero-button hero-button--secondary" href="${giveaway.giverHomeLink}" target="_blank" rel="noreferrer">Open Host Home</a>` : ''}
+          ${renderGiveawayActionButtons(giveaway, canManage, currentEntry, { isPreview })}
         </div>
       </div>
     </article>
@@ -1875,7 +1943,7 @@ function renderGiveawayMedia(giveaway) {
   return `
     <div class="giveaway-card__placeholder">
       <strong>No image uploaded</strong>
-      <span>${escapeHtml(giveaway.giverName)} posted this giveaway with text details only.</span>
+      <span>${escapeHtml(giveaway.giverName)} hosted this giveaway with text details only.</span>
     </div>
   `;
 }
@@ -1886,7 +1954,7 @@ function renderGiveawayWinnerBanner(giveaway) {
       <p class="eyebrow">Winner</p>
       <strong>${escapeHtml(giveaway.winnerName)}</strong>
       <span>${escapeHtml(giveaway.winnerInGameName ? `YoWorld: ${giveaway.winnerInGameName}` : 'Winner selected')}</span>
-      <span class="muted">${escapeHtml(giveaway.winnerSelectedLabel || 'Winner saved')}</span>
+      <span class="muted">${escapeHtml(giveaway.winnerSelectedLabel || 'Winner posted and giveaway closed')}</span>
     </div>
   `;
 }
@@ -1925,9 +1993,22 @@ function renderGiveawayEntryChip(giveaway, entry) {
   `;
 }
 
-function renderGiveawayActionButtons(giveaway, canManage, currentEntry) {
+function renderGiveawayActionButtons(giveaway, canManage, currentEntry, options = {}) {
+  const { isPreview = false } = options;
   const buttons = [];
   const isBusy = state.admin.isBusy ? ' disabled' : '';
+
+  if (isPreview) {
+    if (giveaway.hasWinner) {
+      buttons.push('<button class="hero-button" type="button" disabled>Winner Posted</button>');
+    } else if (giveaway.isOpen) {
+      buttons.push('<button class="hero-button" type="button" disabled>Enter Giveaway</button>');
+    } else {
+      buttons.push('<button class="hero-button hero-button--secondary" type="button" disabled>Giveaway Closed</button>');
+    }
+
+    return buttons.join('');
+  }
 
   if (canManage) {
     buttons.push(`<button class="hero-button hero-button--secondary" type="button" data-action="giveaway-edit" data-giveaway-id="${escapeHtml(giveaway.id)}"${isBusy}>Edit Giveaway</button>`);
@@ -1938,7 +2019,7 @@ function renderGiveawayActionButtons(giveaway, canManage, currentEntry) {
   }
 
   if (canManage && !giveaway.hasWinner && giveaway.entryCount > 0) {
-    buttons.push(`<button class="hero-button" type="button" data-action="giveaway-pick-winner" data-giveaway-id="${escapeHtml(giveaway.id)}"${isBusy}>Pick Random Winner</button>`);
+    buttons.push(`<button class="hero-button" type="button" data-action="giveaway-pick-winner" data-giveaway-id="${escapeHtml(giveaway.id)}"${isBusy}>Pick Winner & Close Giveaway</button>`);
   }
 
   if (canManage && giveaway.hasWinner && giveaway.entryCount > 1) {
@@ -1953,7 +2034,7 @@ function renderGiveawayActionButtons(giveaway, canManage, currentEntry) {
     buttons.push(`<button class="hero-button hero-button--secondary" type="button" data-action="giveaway-deactivate" data-giveaway-id="${escapeHtml(giveaway.id)}"${isBusy}>Close Giveaway</button>`);
   }
 
-  if (!canManage && giveaway.isOpen) {
+  if (giveaway.isOpen) {
     if (!state.admin.session) {
       buttons.push('<button class="hero-button" type="button" data-section="account">Sign In to Enter</button>');
     } else if (!hasLinkedGiveawayAccess()) {
@@ -3991,6 +4072,17 @@ function syncGiveawayDraftField(target) {
   }
 
   syncAdminDraftState('giveawayForm', ADMIN_GIVEAWAY_FIELD_MAP, target);
+  refreshGiveawayComposerPreview();
+}
+
+function refreshGiveawayComposerPreview() {
+  const previewRoot = app.querySelector('[data-giveaway-preview]');
+
+  if (!previewRoot) {
+    return;
+  }
+
+  previewRoot.innerHTML = renderGiveawayComposerPreview(getGiveawayComposerState());
 }
 
 function handleWishlistImageSelection(target) {
@@ -4044,6 +4136,7 @@ function handleGiveawayImageSelection(target) {
       imagePath: '',
       imageMimeType: '',
     };
+    refreshGiveawayComposerPreview();
     return;
   }
 
@@ -4059,6 +4152,7 @@ function handleGiveawayImageSelection(target) {
       imageMimeType: '',
     };
     setAdminNotice(error instanceof Error ? error.message : 'Choose a PNG or JPEG image.', 'error');
+    refreshGiveawayComposerPreview();
     return;
   }
 
@@ -4071,6 +4165,7 @@ function handleGiveawayImageSelection(target) {
     imageMimeType: file.type || '',
   };
   setAdminNotice(`${file.name || 'Image'} is ready to upload with this giveaway.`, 'success');
+  refreshGiveawayComposerPreview();
 }
 
 function validateWishlistImageFile(file) {
@@ -4595,7 +4690,7 @@ async function pickGiveawayWinner(giveawayId) {
   }
 
   state.admin.isBusy = true;
-  setAdminNotice('Picking a random winner...', 'muted');
+  setAdminNotice('Picking a winner and closing the giveaway...', 'muted');
   render();
 
   try {
@@ -4616,7 +4711,7 @@ async function pickGiveawayWinner(giveawayId) {
     const winnerName = cleanText(savedRow?.winner_name_snapshot) || giveaway.winnerName || 'Winner selected';
 
     await loadLiveGiveaways();
-    setAdminNotice(`${winnerName} was picked for ${giveaway.title}.`, 'success');
+    setAdminNotice(`${winnerName} was posted as the winner for ${giveaway.title}, and the giveaway is now closed.`, 'success');
   } catch (error) {
     setAdminNotice(error instanceof Error ? error.message : 'Could not pick a winner for that giveaway.', 'error');
   } finally {
@@ -6675,12 +6770,12 @@ function formatGiveawayWinnerLabel(value) {
     return '';
   }
 
-  return `Picked ${parsedDate.toLocaleString('en-US', {
+  return `Winner posted ${parsedDate.toLocaleString('en-US', {
     month: 'short',
     day: 'numeric',
     hour: 'numeric',
     minute: '2-digit',
-  })}`;
+  })} • Giveaway closed`;
 }
 
 function formatGiveawayEntryCreatedLabel(value) {
@@ -6716,7 +6811,7 @@ function isGiveawayOpen({ isActive, endsAt, winnerSelectedAt }) {
 function getGiveawayStatusPresentation({ isActive, isOpen, hasWinner }) {
   if (hasWinner) {
     return {
-      label: 'Winner picked',
+      label: 'Winner posted',
       className: 'tag--giveaway-winner',
     };
   }
