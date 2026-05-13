@@ -1517,7 +1517,11 @@ function renderHangouts() {
       ${renderEventSourceNotice()}
       ${renderEventComposerPanel(currentMembers)}
       ${currentEvents.length
-        ? currentEvents.map((calendarEvent) => renderEventCard(calendarEvent)).join('')
+        ? `
+            <div class="event-grid event-grid--feed panel--span-full">
+              ${currentEvents.map((calendarEvent) => renderEventCard(calendarEvent)).join('')}
+            </div>
+          `
         : renderEmptyEventPanel(
             state.eventSource === 'loading' ? 'Loading events' : 'No events posted yet',
             state.eventSource === 'loading'
@@ -1585,20 +1589,50 @@ function renderEventCard(calendarEvent, options = {}) {
   const secondaryMetaValue = isBirthdayCard
     ? (calendarEvent.birthdayLabel || formatEventDateLabel(calendarEvent.eventDate) || 'Birthday coming soon')
     : (calendarEvent.locationText || 'Location coming soon');
+  const footerContent = isBirthdayCard
+    ? `
+        <div class="button-row event-card__actions">
+          ${calendarEvent.homeLink ? `<a class="hero-button hero-button--secondary" href="${escapeHtml(calendarEvent.homeLink)}" target="_blank" rel="noreferrer">Open Home Link</a>` : '<span class="muted">No home link added yet.</span>'}
+        </div>
+      `
+    : `
+        <div class="event-stats" aria-label="Event response counts">
+          <div class="event-stat">
+            <span>Yes</span>
+            <strong>${calendarEvent.yesCount}</strong>
+          </div>
+          <div class="event-stat">
+            <span>Maybe</span>
+            <strong>${calendarEvent.maybeCount}</strong>
+          </div>
+          <div class="event-stat">
+            <span>No</span>
+            <strong>${calendarEvent.noCount}</strong>
+          </div>
+        </div>
+        ${showEventActions
+          ? `
+              <div class="button-row admin-form-actions event-card__actions">
+                <button class="hero-button hero-button--secondary" type="button" data-action="admin-edit-event" data-event-id="${escapeHtml(calendarEvent.id)}">Edit Event</button>
+                <button class="tracker-button" type="button" data-action="admin-deactivate-event" data-event-id="${escapeHtml(calendarEvent.id)}">Deactivate Event</button>
+              </div>
+            `
+          : ''}
+      `;
 
   return `
-    <article class="panel event-card"${!isBirthdayCard && cleanText(calendarEvent.id) ? ` data-event-card-id="${escapeHtml(calendarEvent.id)}"` : ''}>
-      <div class="panel__heading">
+    <article class="panel event-card ${isBirthdayCard ? 'event-card--birthday' : 'event-card--standard'}"${!isBirthdayCard && cleanText(calendarEvent.id) ? ` data-event-card-id="${escapeHtml(calendarEvent.id)}"` : ''}>
+      <div class="panel__heading event-card__heading">
         <div class="event-title-row">
           <span class="event-type-icon ${calendarEvent.typeIndicatorClass}" aria-hidden="true">${escapeHtml(calendarEvent.typeIndicator)}</span>
-          <div>
+          <div class="event-card__title-block">
             <p class="eyebrow">${escapeHtml(calendarEvent.eventTypeLabel)}</p>
             <h3>${escapeHtml(calendarEvent.title)}</h3>
           </div>
         </div>
-        <span class="tag">${escapeHtml(calendarEvent.whenLabel)}</span>
+        <span class="tag event-card__when">${escapeHtml(calendarEvent.whenLabel)}</span>
       </div>
-      <p class="panel-lead">${escapeHtml(leadText)}</p>
+      <p class="panel-lead event-card__lead">${escapeHtml(leadText)}</p>
       <div class="event-meta">
         <div class="event-meta-row">
           <strong>${escapeHtml(primaryMetaLabel)}</strong>
@@ -1609,36 +1643,9 @@ function renderEventCard(calendarEvent, options = {}) {
           <span>${escapeHtml(secondaryMetaValue)}</span>
         </div>
       </div>
-      ${isBirthdayCard
-        ? `
-            <div class="button-row admin-form-actions">
-              ${calendarEvent.homeLink ? `<a class="hero-button hero-button--secondary" href="${escapeHtml(calendarEvent.homeLink)}" target="_blank" rel="noreferrer">Open Home Link</a>` : '<span class="muted">No home link added yet.</span>'}
-            </div>
-          `
-        : `
-            <div class="stats-grid stats-grid--compact event-stats">
-              <div class="stat-card">
-                <span>Yes</span>
-                <strong>${calendarEvent.yesCount}</strong>
-              </div>
-              <div class="stat-card">
-                <span>Maybe</span>
-                <strong>${calendarEvent.maybeCount}</strong>
-              </div>
-              <div class="stat-card">
-                <span>No</span>
-                <strong>${calendarEvent.noCount}</strong>
-              </div>
-            </div>
-          `}
-      ${showEventActions
-        ? `
-            <div class="button-row admin-form-actions">
-              <button class="hero-button hero-button--secondary" type="button" data-action="admin-edit-event" data-event-id="${escapeHtml(calendarEvent.id)}">Edit Event</button>
-              <button class="tracker-button" type="button" data-action="admin-deactivate-event" data-event-id="${escapeHtml(calendarEvent.id)}">Deactivate Event</button>
-            </div>
-          `
-        : ''}
+      <div class="event-card__footer">
+        ${footerContent}
+      </div>
     </article>
   `;
 }
