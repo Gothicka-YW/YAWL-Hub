@@ -592,6 +592,26 @@ textarea {
   color: var(--muted);
 }
 
+.month-calendar__details-link {
+  padding: 0 0 0 1.5rem;
+  border: 0;
+  background: none;
+  color: var(--accent-deep);
+  font: inherit;
+  font-size: 0.68rem;
+  font-weight: 700;
+  line-height: 1.2;
+  text-align: left;
+  text-decoration: underline;
+  text-underline-offset: 0.16em;
+  cursor: pointer;
+}
+
+.month-calendar__details-link:hover,
+.month-calendar__details-link:focus-visible {
+  color: var(--ink);
+}
+
 .wish-grid,
 .stack-list,
 .launch-grid {

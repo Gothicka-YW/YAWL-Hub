@@ -195,6 +195,15 @@ app.addEventListener('click', async (event) => {
       render();
       restoreMemberDirectorySearchFocus();
       return;
+    case 'calendar-open-event':
+      if (!cleanText(eventId)) {
+        return;
+      }
+
+      state.activeSection = 'hangouts';
+      render();
+      scheduleScrollTo(`[data-event-card-id="${cleanText(eventId)}"]`);
+      return;
     case 'admin-edit-member':
       beginEditingMember(memberId);
       render();
@@ -1067,6 +1076,7 @@ function renderDashboardCalendarCell(cell) {
   }
 
   const primaryCalendarItem = cell.calendarItems[0];
+  const detailTarget = getDashboardCalendarDetailTarget(cell);
   const moreCount = Math.max(0, cell.calendarItems.length - 1);
   const cellClasses = [
     'month-calendar__cell',
@@ -1091,6 +1101,7 @@ function renderDashboardCalendarCell(cell) {
                 <span class="month-calendar__event-title">${escapeHtml(primaryCalendarItem.title)}</span>
               </div>
               ${moreCount ? `<div class="month-calendar__more">+${moreCount} more</div>` : ''}
+              ${detailTarget ? `<button class="month-calendar__details-link" type="button" data-action="calendar-open-event" data-event-id="${escapeHtml(detailTarget.id)}" aria-label="${escapeHtml(`See details for ${detailTarget.title}`)}">See details</button>` : ''}
             </div>
           `
         : '<div class="month-calendar__events month-calendar__events--empty"></div>'}
@@ -1576,7 +1587,7 @@ function renderEventCard(calendarEvent, options = {}) {
     : (calendarEvent.locationText || 'Location coming soon');
 
   return `
-    <article class="panel event-card">
+    <article class="panel event-card"${!isBirthdayCard && cleanText(calendarEvent.id) ? ` data-event-card-id="${escapeHtml(calendarEvent.id)}"` : ''}>
       <div class="panel__heading">
         <div class="event-title-row">
           <span class="event-type-icon ${calendarEvent.typeIndicatorClass}" aria-hidden="true">${escapeHtml(calendarEvent.typeIndicator)}</span>
@@ -2642,6 +2653,14 @@ function buildDashboardCalendarCellTitle(cell) {
   });
 
   return [dateLabel, ...itemLines].join('\n');
+}
+
+function getDashboardCalendarDetailTarget(cell) {
+  if (cell.kind !== 'day' || !Array.isArray(cell.calendarItems)) {
+    return null;
+  }
+
+  return cell.calendarItems.find((calendarItem) => !calendarItem.isBirthday && cleanText(calendarItem.id)) || null;
 }
 
 function getDirectoryStatusText() {
