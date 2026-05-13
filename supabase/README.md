@@ -18,7 +18,8 @@ Use these files in order:
 14. Run `13_wishlist_image_uploads_and_comments.sql` to add the wishlist image bucket, image-post columns, and gift comments.
 15. Run `14_invite_code_account_claims.sql` to switch member ownership to `auth.uid()`, add admin-generated invite codes, and let signed-in users claim their member profile after account creation.
 16. Push the self-owned posting migration in `supabase/migrations/20260512000100_self_owned_posting.sql` after `14_invite_code_account_claims.sql` if wish lists and new events should be locked to the signed-in member profile.
-17. Create or sign in to a Supabase Auth account that uses the same email as your `staff_permissions` row.
+17. Push `supabase/migrations/20260513000100_giveaways.sql` after the self-owned posting migration to add live giveaways, entrant reactions, image uploads, and the random winner picker.
+18. Create or sign in to a Supabase Auth account that uses the same email as your `staff_permissions` row.
 
 Notes:
 
@@ -41,6 +42,7 @@ Notes:
 - `13_wishlist_image_uploads_and_comments.sql` adds the public wishlist image bucket, owner-only image post updates, and public gift comments.
 - `14_invite_code_account_claims.sql` adds invite-code claiming, links member ownership to `auth.uid()`, and keeps self-service email/password resets inside Supabase Auth.
 - `supabase/migrations/20260512000100_self_owned_posting.sql` locks new wish list and event posts to the signed-in member profile while still allowing staff to moderate existing event posts.
+- `supabase/migrations/20260513000100_giveaways.sql` adds live giveaways, public entrant lists, the giveaway image bucket, and a server-side random winner picker for creators and staff.
 
 ## Supabase CLI Workflow
 
@@ -62,6 +64,7 @@ Apply the existing SQL files from the terminal:
 - Helper script, wish list image/comment setup: `./scripts/apply-supabase-sql.ps1 -Files supabase/13_wishlist_image_uploads_and_comments.sql`
 - Helper script, invite-code account claim setup: `./scripts/apply-supabase-sql.ps1 -Files supabase/14_invite_code_account_claims.sql`
 - Helper script, live launch ownership setup: `./scripts/apply-supabase-sql.ps1 -Files supabase/14_invite_code_account_claims.sql,supabase/migrations/20260512000100_self_owned_posting.sql`
+- Helper script, giveaways setup: `./scripts/apply-supabase-sql.ps1 -Files supabase/migrations/20260513000100_giveaways.sql`
 - Helper script, full ordered set: `./scripts/apply-supabase-sql.ps1 -All`
 - Optional sample event seed: `./scripts/apply-supabase-sql.ps1 -Files supabase/09_seed_sample_event.sql`
 

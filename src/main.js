@@ -1,7 +1,7 @@
 const {
   adminChecklist,
   dashboard,
-  giveaways,
+  giveaways: mockGiveaways,
   hangouts: mockHangouts,
   members: mockMembers,
   wishlists: mockWishlists,
@@ -97,6 +97,11 @@ const ADMIN_WISHLIST_FIELD_MAP = {
   status_note: 'statusNote',
   thank_you_note: 'thankYouNote',
 };
+const ADMIN_GIVEAWAY_FIELD_MAP = {
+  title: 'title',
+  item_text: 'itemText',
+  ends_at_local: 'endsAtLocal',
+};
 const ADMIN_MEMBER_INVITE_FIELD_MAP = {
   invited_member_id: 'memberId',
   expires_in_days: 'expiresInDays',
@@ -121,6 +126,9 @@ const WISHLIST_TIMEZONE = 'America/New_York';
 const WISHLIST_IMAGE_BUCKET = 'wishlist-images';
 const WISHLIST_IMAGE_MAX_BYTES = 8 * 1024 * 1024;
 const WISHLIST_IMAGE_TYPES = new Set(['image/png', 'image/jpeg']);
+const GIVEAWAY_IMAGE_BUCKET = 'giveaway-images';
+const GIVEAWAY_IMAGE_MAX_BYTES = 8 * 1024 * 1024;
+const GIVEAWAY_IMAGE_TYPES = new Set(['image/png', 'image/jpeg']);
 
 const defaultPrivateState = {
   notes: '',
@@ -131,6 +139,7 @@ const defaultPrivateState = {
 const initialMembers = normalizeMockMembers(mockMembers);
 const initialEvents = normalizeMockEvents(mockHangouts);
 const initialWishlists = normalizeMockWishlists(mockWishlists, initialMembers);
+const initialGiveaways = normalizeMockGiveaways(mockGiveaways, initialMembers);
 
 const state = {
   activeSection: 'dashboard',
@@ -145,6 +154,9 @@ const state = {
   wishlists: initialWishlists,
   wishlistSource: hasSupabaseConfig ? 'loading' : 'mock',
   wishlistSourceMessage: hasSupabaseConfig ? 'Supabase config detected. Loading weekly wish lists...' : getSupabaseStatus(),
+  giveaways: initialGiveaways,
+  giveawaySource: hasSupabaseConfig ? 'loading' : 'mock',
+  giveawaySourceMessage: hasSupabaseConfig ? 'Supabase config detected. Loading live giveaways...' : getSupabaseStatus(),
   admin: createDefaultAdminState(),
 };
 
@@ -154,6 +166,7 @@ render();
 void loadLiveMembers();
 void loadLiveEvents();
 void loadLiveWishlists();
+void loadLiveGiveaways();
 void initializeAdminSession();
 
 app.addEventListener('click', async (event) => {
@@ -187,7 +200,7 @@ app.addEventListener('click', async (event) => {
     return;
   }
 
-  const { action, memberId, eventId } = actionButton.dataset;
+  const { action, memberId, eventId, giveawayId } = actionButton.dataset;
 
   switch (action) {
     case 'members-clear-filters':
@@ -226,6 +239,10 @@ app.addEventListener('click', async (event) => {
       resetWishlistEditor();
       render();
       return;
+    case 'giveaway-reset-form':
+      resetGiveawayEditor();
+      render();
+      return;
     case 'admin-refresh-session':
       await initializeAdminSession(true);
       return;
@@ -237,6 +254,18 @@ app.addEventListener('click', async (event) => {
       return;
     case 'admin-deactivate-event':
       await deactivateEvent(eventId);
+      return;
+    case 'giveaway-toggle-entry':
+      await handleGiveawayEntryToggle(giveawayId);
+      return;
+    case 'giveaway-copy-entrants':
+      await copyGiveawayEntrants(giveawayId);
+      return;
+    case 'giveaway-pick-winner':
+      await pickGiveawayWinner(giveawayId);
+      return;
+    case 'giveaway-deactivate':
+      await deactivateGiveaway(giveawayId);
       return;
     default:
       return;
@@ -317,6 +346,12 @@ app.addEventListener('submit', async (event) => {
   if (event.target.matches('[data-wishlist-form]')) {
     event.preventDefault();
     await handleWishlistSubmit(event);
+    return;
+  }
+
+  if (event.target.matches('[data-giveaway-form]')) {
+    event.preventDefault();
+    await handleGiveawaySubmit(event);
     return;
   }
 
@@ -536,6 +571,52 @@ function canEditWishlistPost(wishlist) {
 
   const linkedMember = getLinkedWishlistMember();
   return Boolean(linkedMember && cleanText(linkedMember.id) === cleanText(wishlist.memberId));
+}
+
+function canManageGiveaway(giveaway) {
+  if (!giveaway) {
+    return false;
+  }
+
+  if (canManageMembers() || canManageEvents()) {
+    return true;
+  }
+
+  const linkedMember = getLinkedGiveawayMember();
+  const sessionUserId = getSessionUserId();
+  const sessionEmail = cleanText(state.admin.session?.user?.email).toLowerCase();
+
+  if (!linkedMember || (!sessionUserId && !sessionEmail)) {
+    return false;
+  }
+
+  return (
+    cleanText(giveaway.giverMemberId) === cleanText(linkedMember.id)
+    && (
+      (sessionUserId && cleanText(giveaway.createdByUserId) === sessionUserId)
+      || (sessionEmail && cleanText(giveaway.createdByEmail).toLowerCase() === sessionEmail)
+    )
+  );
+}
+
+function canEnterGiveaway(giveaway) {
+  if (!giveaway || !giveaway.isOpen) {
+    return false;
+  }
+
+  const linkedMember = getLinkedGiveawayMember();
+  const sessionUserId = getSessionUserId();
+  const sessionEmail = cleanText(state.admin.session?.user?.email).toLowerCase();
+
+  if (!linkedMember || (!sessionUserId && !sessionEmail)) {
+    return false;
+  }
+
+  if (cleanText(giveaway.giverMemberId) === cleanText(linkedMember.id)) {
+    return false;
+  }
+
+  return true;
 }
 
 function hasLinkedWishlistAccess() {
@@ -1175,7 +1256,7 @@ function renderLaunchpadPanel() {
 }
 
 function getDashboardStats(upcomingMembers) {
-  const openGiveaways = giveaways.filter((item) => !cleanText(item.claimedBy)).length;
+  const openGiveaways = getGiveaways().filter((item) => item.isOpen).length;
 
   return [
     { label: 'Wish Lists active', value: String(getActiveWishlists().length) },
@@ -1482,30 +1563,290 @@ function renderBirthdays() {
 }
 
 function renderGiveaways() {
+  const currentGiveaways = getGiveaways();
+  const openCount = currentGiveaways.filter((item) => item.isOpen).length;
+
   return `
-    <section class="panel-grid panel-grid--members">
-      ${giveaways
-        .map(
-          (item) => `
-            <article class="panel">
-              <div class="member-card__header">
-                <div>
-                  <p class="eyebrow">Giveaway</p>
-                  <h3>${item.title}</h3>
+    <section class="panel-grid panel-grid--directory-page">
+      ${renderGiveawaySourceNotice()}
+      <article class="panel panel--announcement panel--span-full">
+        <div class="panel__heading">
+          <div>
+            <p class="eyebrow">Giveaways</p>
+            <h3>Post item drops and let members enter live</h3>
+          </div>
+          <span class="tag">${escapeHtml(`${openCount} open`)}</span>
+        </div>
+        <p class="panel-lead">Giveaway posts are now live: members can upload an image, set an end date and time, let others react to enter, show every entry publicly, and pick a random winner when the giveaway closes.</p>
+      </article>
+
+      ${renderGiveawayComposer()}
+
+      <article class="panel panel--directory panel--span-full">
+        <div class="panel__heading">
+          <div>
+            <p class="eyebrow">Live Board</p>
+            <h3>Active and recent giveaways</h3>
+          </div>
+          <span class="tag">${escapeHtml(`${currentGiveaways.length} posts`)}</span>
+        </div>
+        <div class="giveaway-board">
+          ${currentGiveaways.length
+            ? currentGiveaways.map((giveaway) => renderGiveawayCard(giveaway)).join('')
+            : `
+                <div class="list-row list-row--compact">
+                  <span>${escapeHtml(state.giveawaySource === 'loading' ? 'Loading live giveaways...' : 'No giveaways are live yet.')}</span>
                 </div>
-                <span class="tag ${item.claimedBy ? 'tag--muted' : ''}">${item.claimedBy ? 'Claimed' : 'Open'}</span>
-              </div>
-              <p>Posted by ${item.donor}</p>
-              <p class="muted">${item.note}</p>
-              <p class="claim-row">
-                ${item.claimedBy ? `Claimed by ${item.claimedBy}` : 'Available for a member claim flow later.'}
-              </p>
-            </article>
-          `,
-        )
-        .join('')}
+              `}
+        </div>
+      </article>
     </section>
   `;
+}
+
+function renderGiveawayComposer() {
+  if (!state.admin.session) {
+    return `
+      <article class="panel panel--announcement panel--span-full">
+        <div class="panel__heading">
+          <div>
+            <p class="eyebrow">Post a Giveaway</p>
+            <h3>Sign in before posting or entering</h3>
+          </div>
+        </div>
+        <p class="panel-lead">Giveaways use your YAWL Hub account so the giver and entrant list stay tied to the correct member profile.</p>
+        ${renderAdminNotice()}
+        <div class="button-row">
+          <button class="hero-button" type="button" data-section="account">Open Account</button>
+        </div>
+      </article>
+    `;
+  }
+
+  if (!hasLinkedGiveawayAccess()) {
+    return `
+      <article class="panel panel--announcement panel--span-full">
+        <div class="panel__heading">
+          <div>
+            <p class="eyebrow">Post a Giveaway</p>
+            <h3>Claim your member invite first</h3>
+          </div>
+        </div>
+        <p class="panel-lead">Ask an admin for your invite code, then claim your member profile from Account before posting or entering giveaways.</p>
+        ${renderAdminNotice()}
+        <div class="button-row">
+          <button class="hero-button hero-button--secondary" type="button" data-section="account">Open Account</button>
+        </div>
+      </article>
+    `;
+  }
+
+  const linkedMember = getLinkedGiveawayMember();
+  const form = state.admin.giveawayForm;
+  const isBusy = state.admin.isBusy;
+
+  return `
+    <article class="panel panel--span-full">
+      <div class="panel__heading">
+        <div>
+          <p class="eyebrow">Post a Giveaway</p>
+          <h3>Create a new live giveaway</h3>
+        </div>
+      </div>
+      <p class="panel-lead">Post as your claimed member profile, upload an optional image, set the end date and time, and let members enter from the board below.</p>
+      ${renderAdminNotice()}
+      <form class="admin-form giveaway-form" data-giveaway-form>
+        <div class="form-grid giveaway-form__grid">
+          <label class="field-group">
+            <span>Giving As</span>
+            <input class="text-input" type="text" value="${escapeHtml(formatGiveawayComposerIdentity(linkedMember))}" readonly>
+            <small class="field-help">This post is tied to your claimed member profile.</small>
+          </label>
+          <label class="field-group">
+            <span>Ends</span>
+            <input class="text-input" type="datetime-local" name="ends_at_local" value="${escapeHtml(form.endsAtLocal)}" required>
+            <small class="field-help">The saved end time uses your current browser timezone.</small>
+          </label>
+          <label class="field-group field-group--wide">
+            <span>Giveaway Title</span>
+            <input class="text-input" type="text" name="title" maxlength="120" placeholder="Example: Cottage Garden Bundle" value="${escapeHtml(form.title)}" required>
+          </label>
+          <label class="field-group field-group--wide">
+            <span>Item Details</span>
+            <textarea name="item_text" class="admin-textarea" maxlength="2000" placeholder="Describe the item or bundle, any entry notes, and anything members should know.">${escapeHtml(form.itemText)}</textarea>
+          </label>
+          <label class="field-group giveaway-upload-field">
+            <span>Giveaway Image</span>
+            <input class="text-input" type="file" name="giveaway_image_file" accept="image/png,image/jpeg">
+            <small class="field-help">Optional. PNG or JPEG, up to ${Math.round(GIVEAWAY_IMAGE_MAX_BYTES / (1024 * 1024))} MB.</small>
+          </label>
+          <div class="field-group">
+            <span>Preview</span>
+            ${renderGiveawayImagePreview(form)}
+          </div>
+        </div>
+        <div class="button-row admin-form-actions giveaway-form__actions">
+          <button class="hero-button" type="submit"${isBusy ? ' disabled' : ''}>${escapeHtml(isBusy ? 'Saving giveaway...' : 'Post Giveaway')}</button>
+          <button class="hero-button hero-button--secondary" type="button" data-action="giveaway-reset-form"${isBusy ? ' disabled' : ''}>Clear Form</button>
+        </div>
+      </form>
+    </article>
+  `;
+}
+
+function renderGiveawayImagePreview(form) {
+  const previewUrl = cleanText(form.imagePreviewUrl);
+  const imageName = cleanText(form.imageName);
+
+  if (!previewUrl) {
+    return `
+      <div class="giveaway-image-preview">
+        <div class="giveaway-card__placeholder">
+          <strong>No image selected</strong>
+          <span>Upload a screenshot or item preview if you want the giveaway tile to include artwork.</span>
+        </div>
+      </div>
+    `;
+  }
+
+  return `
+    <div class="giveaway-image-preview">
+      <img class="giveaway-image-preview__image" src="${escapeHtml(previewUrl)}" alt="${escapeHtml(imageName || 'Giveaway preview')}" loading="lazy">
+      <span class="muted">${escapeHtml(imageName || 'Selected giveaway image')}</span>
+    </div>
+  `;
+}
+
+function renderGiveawayCard(giveaway) {
+  const canManage = canManageGiveaway(giveaway);
+  const linkedMember = getLinkedGiveawayMember();
+  const currentEntry = linkedMember ? getGiveawayEntryForMember(giveaway, linkedMember.id) : null;
+
+  return `
+    <article class="giveaway-card">
+      <div class="giveaway-card__media">
+        ${renderGiveawayMedia(giveaway)}
+      </div>
+      <div class="giveaway-card__body">
+        <div class="panel__heading">
+          <div>
+            <p class="eyebrow">Giveaway</p>
+            <h3>${escapeHtml(giveaway.title)}</h3>
+          </div>
+          <span class="tag ${escapeHtml(giveaway.statusTagClass)}">${escapeHtml(giveaway.statusLabel)}</span>
+        </div>
+        <p class="panel-lead">${escapeHtml(giveaway.itemText)}</p>
+        <div class="event-meta giveaway-meta">
+          <div class="event-meta-row">
+            <strong>Given by</strong>
+            <span>${escapeHtml(formatGiveawayGiverLine(giveaway))}</span>
+          </div>
+          <div class="event-meta-row">
+            <strong>Ends</strong>
+            <span>${escapeHtml(giveaway.endsLabel)}</span>
+          </div>
+        </div>
+        <div class="wishlist-counts giveaway-counts">
+          ${renderWishlistCountTag(`${giveaway.entryCount} ${giveaway.entryCount === 1 ? 'entry' : 'entries'}`, giveaway.entryCount > 0 ? 'wishlist-count--success' : '')}
+          ${canManage ? renderWishlistCountTag('You can manage this giveaway', 'wishlist-count--success') : ''}
+          ${currentEntry ? renderWishlistCountTag('You entered', 'wishlist-count--success') : ''}
+        </div>
+        ${giveaway.hasWinner ? renderGiveawayWinnerBanner(giveaway) : ''}
+        ${renderGiveawayEntries(giveaway)}
+        <div class="button-row giveaway-card__actions">
+          ${giveaway.giverHomeLink ? `<a class="hero-button hero-button--secondary" href="${giveaway.giverHomeLink}" target="_blank" rel="noreferrer">Open Giver Home</a>` : ''}
+          ${renderGiveawayActionButtons(giveaway, canManage, currentEntry)}
+        </div>
+      </div>
+    </article>
+  `;
+}
+
+function renderGiveawayMedia(giveaway) {
+  if (giveaway.imageUrl) {
+    return `<img class="giveaway-card__image" src="${escapeHtml(giveaway.imageUrl)}" alt="${escapeHtml(giveaway.title)}" loading="lazy">`;
+  }
+
+  return `
+    <div class="giveaway-card__placeholder">
+      <strong>No image uploaded</strong>
+      <span>${escapeHtml(giveaway.giverName)} posted this giveaway with text details only.</span>
+    </div>
+  `;
+}
+
+function renderGiveawayWinnerBanner(giveaway) {
+  return `
+    <div class="giveaway-winner-banner">
+      <p class="eyebrow">Winner</p>
+      <strong>${escapeHtml(giveaway.winnerName)}</strong>
+      <span>${escapeHtml(giveaway.winnerInGameName ? `YoWorld: ${giveaway.winnerInGameName}` : 'Winner selected')}</span>
+      <span class="muted">${escapeHtml(giveaway.winnerSelectedLabel || 'Winner saved')}</span>
+    </div>
+  `;
+}
+
+function renderGiveawayEntries(giveaway) {
+  return `
+    <section class="giveaway-entries">
+      <div class="wishlist-comments__heading">
+        <div>
+          <p class="eyebrow">Entries</p>
+          <h3>Everyone can see who entered</h3>
+        </div>
+        <span class="tag">${escapeHtml(`${giveaway.entryCount} total`)}</span>
+      </div>
+      <div class="giveaway-entry-list">
+        ${giveaway.entries.length
+          ? giveaway.entries.map((entry) => renderGiveawayEntryChip(giveaway, entry)).join('')
+          : `
+              <div class="list-row list-row--compact">
+                <span>${escapeHtml(giveaway.isOpen ? 'No entries yet. Be the first one in.' : 'This giveaway closed without any entries yet.')}</span>
+              </div>
+            `}
+      </div>
+    </section>
+  `;
+}
+
+function renderGiveawayEntryChip(giveaway, entry) {
+  const isWinner = giveaway.hasWinner && cleanText(giveaway.winnerMemberId) && cleanText(giveaway.winnerMemberId) === cleanText(entry.entrantMemberId);
+
+  return `
+    <div class="giveaway-entry-chip${isWinner ? ' giveaway-entry-chip--winner' : ''}">
+      <strong>${escapeHtml(entry.entrantName)}</strong>
+      <span>${escapeHtml(entry.entrantInGameName ? `YoWorld: ${entry.entrantInGameName}` : entry.createdLabel)}</span>
+    </div>
+  `;
+}
+
+function renderGiveawayActionButtons(giveaway, canManage, currentEntry) {
+  const buttons = [];
+  const isBusy = state.admin.isBusy ? ' disabled' : '';
+
+  if (canManage && giveaway.entryCount > 0) {
+    buttons.push(`<button class="hero-button hero-button--secondary" type="button" data-action="giveaway-copy-entrants" data-giveaway-id="${escapeHtml(giveaway.id)}"${isBusy}>Copy Entrants</button>`);
+  }
+
+  if (canManage && !giveaway.hasWinner && giveaway.entryCount > 0) {
+    buttons.push(`<button class="hero-button" type="button" data-action="giveaway-pick-winner" data-giveaway-id="${escapeHtml(giveaway.id)}"${isBusy}>Pick Random Winner</button>`);
+  }
+
+  if (canManage && giveaway.isActive) {
+    buttons.push(`<button class="hero-button hero-button--secondary" type="button" data-action="giveaway-deactivate" data-giveaway-id="${escapeHtml(giveaway.id)}"${isBusy}>Close Giveaway</button>`);
+  }
+
+  if (!canManage && giveaway.isOpen) {
+    if (!state.admin.session) {
+      buttons.push('<button class="hero-button" type="button" data-section="account">Sign In to Enter</button>');
+    } else if (!hasLinkedGiveawayAccess()) {
+      buttons.push('<button class="hero-button" type="button" data-section="account">Claim Invite to Enter</button>');
+    } else if (canEnterGiveaway(giveaway)) {
+      buttons.push(`<button class="hero-button" type="button" data-action="giveaway-toggle-entry" data-giveaway-id="${escapeHtml(giveaway.id)}"${isBusy}>${escapeHtml(currentEntry ? 'Withdraw Entry' : 'Enter Giveaway')}</button>`);
+    }
+  }
+
+  return buttons.join('');
 }
 
 function renderHangouts() {
@@ -2440,6 +2781,14 @@ function getLinkedWishlistMember() {
   return findMemberById(state.admin.memberAccount?.memberId);
 }
 
+function getLinkedGiveawayMember() {
+  return getLinkedWishlistMember();
+}
+
+function hasLinkedGiveawayAccess() {
+  return Boolean(getLinkedGiveawayMember());
+}
+
 function getWishlistEditorState() {
   const availableMembers = getWishlistEditorMembers();
   const selectedMember = findMemberById(state.admin.wishlistForm.memberId) || availableMembers[0] || null;
@@ -2495,6 +2844,46 @@ function renderWishlistSourceNotice() {
   return `
     <article class="panel panel--announcement panel--span-full">
       <p class="eyebrow">Wishlist Status</p>
+      <h3>${escapeHtml(title)}</h3>
+      <p class="panel-lead">${escapeHtml(message)}</p>
+    </article>
+  `;
+}
+
+function getGiveaways() {
+  return [...state.giveaways].sort(compareGiveaways);
+}
+
+function getGiveawayEntryForMember(giveaway, memberId) {
+  const normalizedMemberId = cleanText(memberId);
+
+  if (!giveaway || !normalizedMemberId) {
+    return null;
+  }
+
+  return giveaway.entries.find((entry) => cleanText(entry.entrantMemberId) === normalizedMemberId) || null;
+}
+
+function renderGiveawaySourceNotice() {
+  if (state.giveawaySource === 'live') {
+    return '';
+  }
+
+  let title = 'Using mock giveaway data';
+  let message = state.giveawaySourceMessage || getSupabaseStatus();
+
+  if (state.giveawaySource === 'loading') {
+    title = 'Loading live giveaways';
+    message = 'The app found your Supabase config and is trying to load the live giveaway board now.';
+  } else if (state.giveawaySource === 'restricted') {
+    title = 'Giveaways are still private';
+  } else if (state.giveawaySource === 'error') {
+    title = 'Live giveaways are unavailable';
+  }
+
+  return `
+    <article class="panel panel--announcement panel--span-full">
+      <p class="eyebrow">Giveaways Status</p>
       <h3>${escapeHtml(title)}</h3>
       <p class="panel-lead">${escapeHtml(message)}</p>
     </article>
@@ -2776,6 +3165,7 @@ function createDefaultAdminState() {
     generatedInvite: null,
     passwordResetForm: createPasswordResetForm(),
     wishlistForm: createEmptyWishlistForm(),
+    giveawayForm: createEmptyGiveawayForm(),
     editingMemberId: '',
     form: createEmptyMemberForm(),
     editingEventId: '',
@@ -2873,6 +3263,19 @@ function createEmptyEventForm(calendarEvent = null) {
     maybeCount: String(normalizeEventCount(calendarEvent?.maybeCount)),
     noCount: String(normalizeEventCount(calendarEvent?.noCount)),
     details: cleanText(calendarEvent?.details),
+  };
+}
+
+function createEmptyGiveawayForm(giveaway = null) {
+  return {
+    title: cleanText(giveaway?.title),
+    itemText: cleanText(giveaway?.itemText),
+    endsAtLocal: cleanText(giveaway?.endsAtLocal) || createDefaultGiveawayEndsAtLocal(),
+    imageFile: null,
+    imagePreviewUrl: '',
+    imageName: cleanText(giveaway?.imageName),
+    imagePath: cleanText(giveaway?.imagePath),
+    imageMimeType: cleanText(giveaway?.imageMimeType),
   };
 }
 
@@ -3223,6 +3626,12 @@ function resetWishlistEditor() {
   setAdminNotice('Wish list form reset.', 'muted');
 }
 
+function resetGiveawayEditor() {
+  revokeGiveawayPreviewUrl(state.admin.giveawayForm.imagePreviewUrl);
+  state.admin.giveawayForm = createEmptyGiveawayForm();
+  setAdminNotice('Giveaway form reset.', 'muted');
+}
+
 function syncAdminDraftField(target) {
   if (!(target instanceof Element) || !target.name) {
     return;
@@ -3245,6 +3654,11 @@ function syncAdminDraftField(target) {
 
   if (target.closest('[data-wishlist-form]')) {
     syncWishlistDraftField(target);
+    return;
+  }
+
+  if (target.closest('[data-giveaway-form]')) {
+    syncGiveawayDraftField(target);
     return;
   }
 
@@ -3343,6 +3757,19 @@ function syncWishlistDraftField(target) {
   syncAdminDraftState('wishlistForm', ADMIN_WISHLIST_FIELD_MAP, target);
 }
 
+function syncGiveawayDraftField(target) {
+  if (!(target instanceof Element) || !target.name) {
+    return;
+  }
+
+  if (target.name === 'giveaway_image_file') {
+    handleGiveawayImageSelection(target);
+    return;
+  }
+
+  syncAdminDraftState('giveawayForm', ADMIN_GIVEAWAY_FIELD_MAP, target);
+}
+
 function handleWishlistImageSelection(target) {
   const file = target instanceof HTMLInputElement && target.files ? target.files[0] : null;
 
@@ -3380,6 +3807,49 @@ function handleWishlistImageSelection(target) {
   setAdminNotice(`${file.name || 'Image'} is ready to upload.`, 'success');
 }
 
+function handleGiveawayImageSelection(target) {
+  const file = target instanceof HTMLInputElement && target.files ? target.files[0] : null;
+
+  revokeGiveawayPreviewUrl(state.admin.giveawayForm.imagePreviewUrl);
+
+  if (!file) {
+    state.admin.giveawayForm = {
+      ...state.admin.giveawayForm,
+      imageFile: null,
+      imagePreviewUrl: '',
+      imageName: '',
+      imagePath: '',
+      imageMimeType: '',
+    };
+    return;
+  }
+
+  try {
+    validateGiveawayImageFile(file);
+  } catch (error) {
+    state.admin.giveawayForm = {
+      ...state.admin.giveawayForm,
+      imageFile: null,
+      imagePreviewUrl: '',
+      imageName: '',
+      imagePath: '',
+      imageMimeType: '',
+    };
+    setAdminNotice(error instanceof Error ? error.message : 'Choose a PNG or JPEG image.', 'error');
+    return;
+  }
+
+  state.admin.giveawayForm = {
+    ...state.admin.giveawayForm,
+    imageFile: file,
+    imagePreviewUrl: URL.createObjectURL(file),
+    imageName: file.name || 'giveaway-image',
+    imagePath: '',
+    imageMimeType: file.type || '',
+  };
+  setAdminNotice(`${file.name || 'Image'} is ready to upload with this giveaway.`, 'success');
+}
+
 function validateWishlistImageFile(file) {
   if (!file) {
     throw new Error('Choose a PNG or JPEG wish list image before saving.');
@@ -3394,7 +3864,33 @@ function validateWishlistImageFile(file) {
   }
 }
 
+function validateGiveawayImageFile(file) {
+  if (!file) {
+    throw new Error('Choose a PNG or JPEG giveaway image before saving.');
+  }
+
+  if (!GIVEAWAY_IMAGE_TYPES.has(file.type)) {
+    throw new Error('Giveaway uploads must be PNG or JPEG images.');
+  }
+
+  if (file.size > GIVEAWAY_IMAGE_MAX_BYTES) {
+    throw new Error(`Giveaway images must be ${Math.round(GIVEAWAY_IMAGE_MAX_BYTES / (1024 * 1024))} MB or smaller.`);
+  }
+}
+
 function revokeWishlistPreviewUrl(url) {
+  if (!url || !String(url).startsWith('blob:')) {
+    return;
+  }
+
+  try {
+    URL.revokeObjectURL(url);
+  } catch {
+    // Ignore stale object URLs.
+  }
+}
+
+function revokeGiveawayPreviewUrl(url) {
   if (!url || !String(url).startsWith('blob:')) {
     return;
   }
@@ -3618,6 +4114,242 @@ async function handleWishlistSubmit(event) {
     setAdminNotice(`${targetMember.displayName} now has an updated wish list image for this week.`, 'success');
   } catch (error) {
     setAdminNotice(error instanceof Error ? error.message : 'Could not save this wish list.', 'error');
+  } finally {
+    state.admin.isBusy = false;
+    render();
+  }
+}
+
+async function handleGiveawaySubmit(event) {
+  if (!state.admin.session) {
+    setAdminNotice('Sign in first to post a giveaway.', 'error');
+    render();
+    return;
+  }
+
+  const linkedMember = getLinkedGiveawayMember();
+
+  if (!linkedMember) {
+    setAdminNotice('Claim your member invite before posting a giveaway.', 'error');
+    render();
+    return;
+  }
+
+  const formData = new FormData(event.target);
+  const selectedImageFile = state.admin.giveawayForm.imageFile;
+
+  state.admin.isBusy = true;
+  setAdminNotice(selectedImageFile ? 'Uploading giveaway image...' : 'Posting giveaway...', 'muted');
+  render();
+
+  try {
+    const payload = buildGiveawayPayload(formData, linkedMember);
+    const imageUpload = selectedImageFile
+      ? await uploadGiveawayImageFile(selectedImageFile, linkedMember, payload.ends_at)
+      : null;
+    const response = await supabaseFetch('giveaways', {
+      method: 'POST',
+      useSession: true,
+      headers: {
+        Prefer: 'return=representation',
+      },
+      body: {
+        ...payload,
+        image_url: normalizeNullableText(imageUpload?.publicUrl),
+        image_path: normalizeNullableText(imageUpload?.path),
+        image_mime_type: normalizeNullableText(imageUpload?.mimeType),
+        image_name: normalizeNullableText(imageUpload?.name),
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error(await getSupabaseErrorMessage(response, 'giveaway-write'));
+    }
+
+    const rows = await response.json();
+    const savedRow = Array.isArray(rows) ? rows[0] : rows;
+    const savedTitle = cleanText(savedRow?.title) || payload.title;
+
+    revokeGiveawayPreviewUrl(state.admin.giveawayForm.imagePreviewUrl);
+    state.admin.giveawayForm = createEmptyGiveawayForm();
+    await loadLiveGiveaways();
+    setAdminNotice(`${savedTitle} is now live on the giveaway board.`, 'success');
+  } catch (error) {
+    setAdminNotice(error instanceof Error ? error.message : 'Could not post that giveaway.', 'error');
+  } finally {
+    state.admin.isBusy = false;
+    render();
+  }
+}
+
+async function handleGiveawayEntryToggle(giveawayId) {
+  const giveaway = getGiveaways().find((entry) => entry.id === cleanText(giveawayId));
+
+  if (!giveaway) {
+    setAdminNotice('That giveaway could not be found.', 'error');
+    render();
+    return;
+  }
+
+  if (!state.admin.session) {
+    setAdminNotice('Sign in first to enter giveaways.', 'error');
+    render();
+    return;
+  }
+
+  const linkedMember = getLinkedGiveawayMember();
+
+  if (!linkedMember) {
+    setAdminNotice('Claim your member invite before entering giveaways.', 'error');
+    render();
+    return;
+  }
+
+  const currentEntry = getGiveawayEntryForMember(giveaway, linkedMember.id);
+
+  if (!giveaway.isOpen) {
+    setAdminNotice('This giveaway is already closed to new entries.', 'error');
+    render();
+    return;
+  }
+
+  if (!currentEntry && !canEnterGiveaway(giveaway)) {
+    setAdminNotice('You cannot enter this giveaway.', 'error');
+    render();
+    return;
+  }
+
+  state.admin.isBusy = true;
+  setAdminNotice(currentEntry ? 'Removing your entry...' : 'Adding your entry...', 'muted');
+  render();
+
+  try {
+    if (currentEntry) {
+      const response = await supabaseFetch('giveaway_entries', {
+        method: 'DELETE',
+        query: new URLSearchParams({ id: `eq.${currentEntry.id}` }).toString(),
+        useSession: true,
+      });
+
+      if (!response.ok) {
+        throw new Error(await getSupabaseErrorMessage(response, 'giveaway-entry-write'));
+      }
+
+      await loadLiveGiveaways();
+      setAdminNotice(`Your entry was removed from ${giveaway.title}.`, 'success');
+    } else {
+      const response = await supabaseFetch('giveaway_entries', {
+        method: 'POST',
+        useSession: true,
+        headers: {
+          Prefer: 'return=representation',
+        },
+        body: {
+          giveaway_id: giveaway.id,
+          entrant_member_id: linkedMember.id,
+          entrant_name_snapshot: linkedMember.facebookName || linkedMember.displayName,
+          entrant_in_game_name_snapshot: linkedMember.inGameName || '',
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error(await getSupabaseErrorMessage(response, 'giveaway-entry-write'));
+      }
+
+      await loadLiveGiveaways();
+      setAdminNotice(`You entered ${giveaway.title}.`, 'success');
+    }
+  } catch (error) {
+    setAdminNotice(error instanceof Error ? error.message : 'Could not update your giveaway entry.', 'error');
+  } finally {
+    state.admin.isBusy = false;
+    render();
+  }
+}
+
+async function copyGiveawayEntrants(giveawayId) {
+  const giveaway = getGiveaways().find((entry) => entry.id === cleanText(giveawayId));
+
+  if (!giveaway) {
+    setAdminNotice('That giveaway could not be found.', 'error');
+    render();
+    return;
+  }
+
+  if (!canManageGiveaway(giveaway)) {
+    setAdminNotice('Only the giveaway creator or staff can copy entrant names.', 'error');
+    render();
+    return;
+  }
+
+  if (!giveaway.entryCount) {
+    setAdminNotice('Add at least one entry before copying entrant names.', 'error');
+    render();
+    return;
+  }
+
+  try {
+    await copyTextToClipboard(buildGiveawayEntrantExportText(giveaway));
+    setAdminNotice(`Copied ${giveaway.entryCount} entrant names for ${giveaway.title}.`, 'success');
+  } catch (error) {
+    setAdminNotice(error instanceof Error ? error.message : 'Could not copy the entrant list.', 'error');
+  }
+
+  render();
+}
+
+async function pickGiveawayWinner(giveawayId) {
+  const giveaway = getGiveaways().find((entry) => entry.id === cleanText(giveawayId));
+
+  if (!giveaway) {
+    setAdminNotice('That giveaway could not be found.', 'error');
+    render();
+    return;
+  }
+
+  if (!canManageGiveaway(giveaway)) {
+    setAdminNotice('Only the giveaway creator or staff can pick a winner.', 'error');
+    render();
+    return;
+  }
+
+  if (giveaway.hasWinner) {
+    setAdminNotice('A winner has already been selected for this giveaway.', 'error');
+    render();
+    return;
+  }
+
+  if (!giveaway.entryCount) {
+    setAdminNotice('Add at least one entry before picking a winner.', 'error');
+    render();
+    return;
+  }
+
+  state.admin.isBusy = true;
+  setAdminNotice('Picking a random winner...', 'muted');
+  render();
+
+  try {
+    const response = await supabaseFetch('rpc/pick_giveaway_winner', {
+      method: 'POST',
+      useSession: true,
+      body: {
+        p_giveaway_id: giveaway.id,
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error(await getSupabaseErrorMessage(response, 'giveaway-winner'));
+    }
+
+    const rows = await response.json();
+    const savedRow = Array.isArray(rows) ? rows[0] : rows;
+    const winnerName = cleanText(savedRow?.winner_name_snapshot) || giveaway.winnerName || 'Winner selected';
+
+    await loadLiveGiveaways();
+    setAdminNotice(`${winnerName} was picked for ${giveaway.title}.`, 'success');
+  } catch (error) {
+    setAdminNotice(error instanceof Error ? error.message : 'Could not pick a winner for that giveaway.', 'error');
   } finally {
     state.admin.isBusy = false;
     render();
@@ -3905,6 +4637,56 @@ async function deactivateEvent(eventId) {
   }
 }
 
+async function deactivateGiveaway(giveawayId) {
+  const giveaway = getGiveaways().find((entry) => entry.id === cleanText(giveawayId));
+
+  if (!giveaway) {
+    setAdminNotice('That giveaway could not be found.', 'error');
+    render();
+    return;
+  }
+
+  if (!canManageGiveaway(giveaway)) {
+    setAdminNotice('Only the giveaway creator or staff can close this giveaway.', 'error');
+    render();
+    return;
+  }
+
+  if (!window.confirm(`Close ${giveaway.title}? Members will still see it, but new entries will stop.`)) {
+    return;
+  }
+
+  state.admin.isBusy = true;
+  setAdminNotice(`Closing ${giveaway.title}...`, 'muted');
+  render();
+
+  try {
+    const response = await supabaseFetch('giveaways', {
+      method: 'PATCH',
+      query: new URLSearchParams({ id: `eq.${giveaway.id}` }).toString(),
+      useSession: true,
+      headers: {
+        Prefer: 'return=representation',
+      },
+      body: {
+        is_active: false,
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error(await getSupabaseErrorMessage(response, 'giveaway-write'));
+    }
+
+    await loadLiveGiveaways();
+    setAdminNotice(`${giveaway.title} was closed.`, 'success');
+  } catch (error) {
+    setAdminNotice(error instanceof Error ? error.message : 'Could not close that giveaway.', 'error');
+  } finally {
+    state.admin.isBusy = false;
+    render();
+  }
+}
+
 function buildMemberPayload(formData, currentMember) {
   const facebookName = cleanText(formData.get('facebook_name'));
 
@@ -4008,6 +4790,26 @@ async function uploadWishlistImageFile(file, member, weekStartDate) {
   };
 }
 
+async function uploadGiveawayImageFile(file, member, endsAtIso) {
+  validateGiveawayImageFile(file);
+
+  if (typeof uploadStorageObject !== 'function') {
+    throw new Error('Storage uploads are not available. Reload the app and try again.');
+  }
+
+  const objectPath = buildGiveawayImageStoragePath(member.id, endsAtIso, file);
+  const upload = await uploadStorageObject(GIVEAWAY_IMAGE_BUCKET, objectPath, file, {
+    cacheControl: '3600',
+  });
+
+  return {
+    path: upload.path,
+    publicUrl: upload.publicUrl,
+    mimeType: file.type,
+    name: file.name || 'giveaway-image',
+  };
+}
+
 function buildWishlistImageStoragePath(memberId, weekStartDate, file) {
   const extension = file.type === 'image/png' ? 'png' : 'jpg';
   const cleanBaseName = cleanText(file.name)
@@ -4018,6 +4820,19 @@ function buildWishlistImageStoragePath(memberId, weekStartDate, file) {
   const timestamp = new Date().toISOString().replace(/[^0-9]/g, '').slice(0, 14);
 
   return `${cleanText(memberId)}/${cleanText(weekStartDate)}/${timestamp}-${cleanBaseName}.${extension}`;
+}
+
+function buildGiveawayImageStoragePath(memberId, endsAtIso, file) {
+  const extension = file.type === 'image/png' ? 'png' : 'jpg';
+  const cleanBaseName = cleanText(file.name)
+    .replace(/\.[^.]+$/, '')
+    .replace(/[^a-z0-9]+/gi, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 44) || 'giveaway';
+  const timestamp = new Date().toISOString().replace(/[^0-9]/g, '').slice(0, 14);
+  const endsSegment = cleanText(endsAtIso).replace(/[^0-9]/g, '').slice(0, 12) || 'open';
+
+  return `${cleanText(memberId)}/${endsSegment}/${timestamp}-${cleanBaseName}.${extension}`;
 }
 
 function buildWishlistPostPayload(formData, member, imageUpload = null, currentWishlist = null) {
@@ -4046,6 +4861,47 @@ function buildWishlistPostPayload(formData, member, imageUpload = null, currentW
     board_image_path: normalizeNullableText(imagePath),
     board_image_mime_type: normalizeNullableText(imageMimeType),
     board_image_name: normalizeNullableText(imageName),
+    is_active: true,
+  };
+}
+
+function buildGiveawayPayload(formData, member) {
+  const title = cleanText(formData.get('title'));
+  const itemText = cleanText(formData.get('item_text'));
+  const endsAtLocal = cleanText(formData.get('ends_at_local'));
+  const endsAtIso = parseDateTimeLocalInputToIso(endsAtLocal);
+
+  if (!title) {
+    throw new Error('Add a title before posting the giveaway.');
+  }
+
+  if (title.length > 120) {
+    throw new Error('Giveaway titles must be 120 characters or fewer.');
+  }
+
+  if (!itemText) {
+    throw new Error('Add the item details before posting the giveaway.');
+  }
+
+  if (itemText.length > 2000) {
+    throw new Error('Giveaway item details must be 2000 characters or fewer.');
+  }
+
+  if (!endsAtIso) {
+    throw new Error('Choose a valid end date and time for the giveaway.');
+  }
+
+  if (new Date(endsAtIso).getTime() <= Date.now()) {
+    throw new Error('Choose an end date and time in the future.');
+  }
+
+  return {
+    giver_member_id: member.id,
+    giver_name_snapshot: member.facebookName || member.displayName,
+    giver_in_game_name_snapshot: member.inGameName || '',
+    title,
+    item_text: itemText,
+    ends_at: endsAtIso,
     is_active: true,
   };
 }
@@ -4288,6 +5144,70 @@ async function loadLiveWishlists() {
   render();
 }
 
+async function loadLiveGiveaways() {
+  if (!hasSupabaseConfig) {
+    return;
+  }
+
+  try {
+    const giveawaysQuery = new URLSearchParams({
+      select:
+        'id,giver_member_id,giver_name_snapshot,giver_in_game_name_snapshot,title,item_text,image_url,image_path,image_mime_type,image_name,ends_at,winner_member_id,winner_name_snapshot,winner_in_game_name_snapshot,winner_selected_at,is_active,created_by_user_id,created_by_email,created_at,updated_at',
+      is_active: 'eq.true',
+      order: 'ends_at.asc,created_at.desc,title.asc',
+    }).toString();
+    const giveawaysResponse = await supabaseFetch('giveaways', {
+      query: giveawaysQuery,
+      method: 'GET',
+    });
+
+    if (!giveawaysResponse.ok) {
+      throw new Error(await getSupabaseErrorMessage(giveawaysResponse, 'giveaways'));
+    }
+
+    const giveawayRows = await giveawaysResponse.json();
+    const normalizedGiveaways = Array.isArray(giveawayRows) ? giveawayRows : [];
+    let entryRows = [];
+
+    if (normalizedGiveaways.length) {
+      const giveawayIds = normalizedGiveaways
+        .map((row) => cleanText(row.id))
+        .filter(Boolean)
+        .join(',');
+
+      if (giveawayIds) {
+        const entriesQuery = new URLSearchParams({
+          select: 'id,giveaway_id,entrant_member_id,entrant_name_snapshot,entrant_in_game_name_snapshot,created_by_user_id,created_by_email,created_at',
+          giveaway_id: `in.(${giveawayIds})`,
+          order: 'giveaway_id.asc,created_at.asc',
+        }).toString();
+        const entriesResponse = await supabaseFetch('giveaway_entries', {
+          query: entriesQuery,
+          method: 'GET',
+        });
+
+        if (!entriesResponse.ok) {
+          throw new Error(await getSupabaseErrorMessage(entriesResponse, 'giveaway-entries'));
+        }
+
+        const liveEntries = await entriesResponse.json();
+        entryRows = Array.isArray(liveEntries) ? liveEntries : [];
+      }
+    }
+
+    state.giveaways = normalizeSupabaseGiveaways(normalizedGiveaways, entryRows);
+    state.giveawaySource = 'live';
+    state.giveawaySourceMessage = `Loaded ${state.giveaways.length} giveaway posts from Supabase.`;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Could not load the giveaway board.';
+    state.giveaways = normalizeMockGiveaways(mockGiveaways, getMembers());
+    state.giveawaySource = /private|policy|permission|forbidden|unauthorized/i.test(message) ? 'restricted' : 'error';
+    state.giveawaySourceMessage = message;
+  }
+
+  render();
+}
+
 async function getSupabaseErrorMessage(response, context = 'read') {
   if (response.status === 401 || response.status === 403) {
     if (context === 'write') {
@@ -4296,6 +5216,18 @@ async function getSupabaseErrorMessage(response, context = 'read') {
 
     if (context === 'event-write') {
       return 'This signed-in account does not have permission to edit events yet.';
+    }
+
+    if (context === 'giveaway-write') {
+      return 'This signed-in account does not have permission to post or close giveaways yet.';
+    }
+
+    if (context === 'giveaway-entry-write') {
+      return 'This signed-in account does not have permission to enter or withdraw from giveaways yet.';
+    }
+
+    if (context === 'giveaway-winner') {
+      return 'This signed-in account does not have permission to pick a giveaway winner yet.';
     }
 
     if (context === 'staff') {
@@ -4308,6 +5240,10 @@ async function getSupabaseErrorMessage(response, context = 'read') {
 
     if (context === 'wishlists') {
       return 'The weekly wish list board is still private. Run supabase/11_weekly_wishlists.sql when you are ready for browser reads.';
+    }
+
+    if (context === 'giveaways' || context === 'giveaway-entries') {
+      return 'The giveaway board is still private. Push supabase/migrations/20260513000100_giveaways.sql first.';
     }
 
     if (context === 'wishlist-write') {
@@ -4342,6 +5278,14 @@ async function getSupabaseErrorMessage(response, context = 'read') {
       return 'The events table is not available yet. Run supabase/08_events_calendar.sql.';
     }
 
+    if (context === 'giveaways' || context === 'giveaway-write' || context === 'giveaway-entries' || context === 'giveaway-entry-write') {
+      return 'The giveaway tables are not available yet. Push supabase/migrations/20260513000100_giveaways.sql first.';
+    }
+
+    if (context === 'giveaway-winner') {
+      return 'The giveaway winner picker is not available yet. Push supabase/migrations/20260513000100_giveaways.sql first.';
+    }
+
     if (context === 'wishlist-comments') {
       return 'The gift comments table is not available yet. Run supabase/13_wishlist_image_uploads_and_comments.sql.';
     }
@@ -4371,6 +5315,10 @@ function normalizeMockMembers(sourceMembers) {
 
 function normalizeMockWishlists(sourceWishlists, memberDirectory = []) {
   return sourceWishlists.map((wishlist, index) => normalizeMockWishlist(wishlist, index, memberDirectory));
+}
+
+function normalizeMockGiveaways(sourceGiveaways, memberDirectory = []) {
+  return sourceGiveaways.map((giveaway, index) => normalizeMockGiveaway(giveaway, index, memberDirectory));
 }
 
 function normalizeMockWishlist(wishlist, index, memberDirectory = []) {
@@ -4412,6 +5360,55 @@ function normalizeMockWishlist(wishlist, index, memberDirectory = []) {
       comments: normalizeWishlistComments(wishlist.comments || thankYouComments, wishlistId),
       updatedAt: cleanText(wishlist.updatedAt),
       createdAt: cleanText(wishlist.createdAt),
+    },
+    index,
+  );
+}
+
+function normalizeMockGiveaway(giveaway, index, memberDirectory = []) {
+  const giveawayId = cleanText(giveaway.id) || `giveaway-${index + 1}`;
+  const giverName = cleanText(giveaway.donor || giveaway.giverName || `Member ${index + 1}`);
+  const winnerName = cleanText(giveaway.claimedBy || giveaway.winnerName);
+  const matchedGiver = findMemberByName(giverName, memberDirectory);
+  const matchedWinner = findMemberByName(winnerName, memberDirectory);
+  const endsAt = winnerName
+    ? new Date(Date.now() - 12 * 60 * 60 * 1000).toISOString()
+    : new Date(Date.now() + (index + 2) * 24 * 60 * 60 * 1000).toISOString();
+
+  return buildGiveawayModel(
+    {
+      id: giveawayId,
+      giverMemberId: cleanText(giveaway.giverMemberId || matchedGiver?.id),
+      giverName,
+      giverInGameName: cleanText(giveaway.giverInGameName || matchedGiver?.inGameName),
+      giverHomeLink: sanitizeUrl(cleanText(giveaway.giverHomeLink || matchedGiver?.homeLink)),
+      title: cleanText(giveaway.title) || `Giveaway ${index + 1}`,
+      itemText: cleanText(giveaway.itemText || giveaway.note) || 'Giveaway details coming soon.',
+      imageUrl: buildAssetUrl(giveaway.imagePath || giveaway.imageUrl),
+      imagePath: cleanText(giveaway.imagePath),
+      imageMimeType: cleanText(giveaway.imageMimeType),
+      imageName: cleanText(giveaway.imageName),
+      endsAt,
+      winnerMemberId: cleanText(giveaway.winnerMemberId || matchedWinner?.id),
+      winnerName,
+      winnerInGameName: cleanText(giveaway.winnerInGameName || matchedWinner?.inGameName),
+      winnerSelectedAt: winnerName ? new Date(Date.now() - 6 * 60 * 60 * 1000).toISOString() : '',
+      isActive: giveaway.isActive !== false,
+      entries: winnerName
+        ? [
+            {
+              id: `${giveawayId}-entry-1`,
+              entrantMemberId: cleanText(matchedWinner?.id),
+              entrantName: winnerName,
+              entrantInGameName: cleanText(matchedWinner?.inGameName),
+              createdAt: new Date(Date.now() - 18 * 60 * 60 * 1000).toISOString(),
+            },
+          ]
+        : [],
+      createdAt: cleanText(giveaway.createdAt) || new Date(Date.now() - (index + 1) * 60 * 60 * 1000).toISOString(),
+      updatedAt: cleanText(giveaway.updatedAt) || new Date(Date.now() - (index + 1) * 45 * 60 * 1000).toISOString(),
+      createdByUserId: '',
+      createdByEmail: '',
     },
     index,
   );
@@ -4531,6 +5528,28 @@ function normalizeSupabaseEvents(rows) {
   return rows.map((row, index) => normalizeSupabaseEvent(row, index));
 }
 
+function normalizeSupabaseGiveaways(rows, entryRows = []) {
+  const entriesByGiveawayId = new Map();
+
+  entryRows.forEach((row) => {
+    const giveawayId = cleanText(row.giveaway_id);
+
+    if (!giveawayId) {
+      return;
+    }
+
+    const currentEntries = entriesByGiveawayId.get(giveawayId) || [];
+    currentEntries.push(row);
+    entriesByGiveawayId.set(giveawayId, currentEntries);
+  });
+
+  return rows.map((row, index) => normalizeSupabaseGiveaway(
+    row,
+    index,
+    entriesByGiveawayId.get(cleanText(row.id)) || [],
+  ));
+}
+
 function normalizeSupabaseWishlist(row, index, itemRows, commentRows = []) {
   const fallbackMember = findMemberById(row.member_id);
 
@@ -4591,6 +5610,39 @@ function normalizeSupabaseEvent(row, index) {
     isActive: row.is_active !== false,
     sortOrder: index,
   };
+}
+
+function normalizeSupabaseGiveaway(row, index, entryRows = []) {
+  const fallbackGiver = findMemberById(row.giver_member_id);
+  const fallbackWinner = findMemberById(row.winner_member_id);
+
+  return buildGiveawayModel(
+    {
+      id: cleanText(row.id) || `giveaway-live-${index + 1}`,
+      giverMemberId: cleanText(row.giver_member_id),
+      giverName: cleanText(row.giver_name_snapshot || fallbackGiver?.facebookName || fallbackGiver?.displayName || `Member ${index + 1}`),
+      giverInGameName: cleanText(row.giver_in_game_name_snapshot || fallbackGiver?.inGameName),
+      giverHomeLink: buildHomeLink(cleanText(fallbackGiver?.houseKey)),
+      title: cleanText(row.title) || `Giveaway ${index + 1}`,
+      itemText: cleanText(row.item_text),
+      imageUrl: cleanText(row.image_url),
+      imagePath: cleanText(row.image_path),
+      imageMimeType: cleanText(row.image_mime_type),
+      imageName: cleanText(row.image_name),
+      endsAt: cleanText(row.ends_at),
+      winnerMemberId: cleanText(row.winner_member_id),
+      winnerName: cleanText(row.winner_name_snapshot || fallbackWinner?.facebookName || fallbackWinner?.displayName),
+      winnerInGameName: cleanText(row.winner_in_game_name_snapshot || fallbackWinner?.inGameName),
+      winnerSelectedAt: cleanText(row.winner_selected_at),
+      isActive: row.is_active !== false,
+      entries: entryRows,
+      createdAt: cleanText(row.created_at),
+      updatedAt: cleanText(row.updated_at),
+      createdByUserId: cleanText(row.created_by_user_id),
+      createdByEmail: cleanText(row.created_by_email).toLowerCase(),
+    },
+    index,
+  );
 }
 
 function normalizeSupabaseMember(row, index) {
@@ -4897,6 +5949,32 @@ function compareWishlists(left, right) {
   return left.memberName.localeCompare(right.memberName) || left.sortOrder - right.sortOrder;
 }
 
+function compareGiveaways(left, right) {
+  if (left.isOpen !== right.isOpen) {
+    return left.isOpen ? -1 : 1;
+  }
+
+  if (left.hasWinner !== right.hasWinner) {
+    return left.hasWinner ? 1 : -1;
+  }
+
+  const leftEndsAt = cleanText(left.endsAt) || '9999-12-31T23:59:59.999Z';
+  const rightEndsAt = cleanText(right.endsAt) || '9999-12-31T23:59:59.999Z';
+
+  if (leftEndsAt !== rightEndsAt) {
+    return leftEndsAt.localeCompare(rightEndsAt);
+  }
+
+  const leftCreatedAt = cleanText(left.createdAt);
+  const rightCreatedAt = cleanText(right.createdAt);
+
+  if (leftCreatedAt !== rightCreatedAt) {
+    return rightCreatedAt.localeCompare(leftCreatedAt);
+  }
+
+  return left.title.localeCompare(right.title) || left.sortOrder - right.sortOrder;
+}
+
 function normalizeWishlistItems(items, parentId = '') {
   return Array.isArray(items)
     ? items
@@ -4928,6 +6006,15 @@ function normalizeWishlistComments(comments, parentId = '') {
     : [];
 }
 
+function normalizeGiveawayEntries(entries, parentId = '') {
+  return Array.isArray(entries)
+    ? entries
+        .map((entry, index) => normalizeGiveawayEntry(entry, index, parentId))
+        .filter((entry) => Boolean(entry.entrantName))
+        .sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.sortOrder - right.sortOrder)
+    : [];
+}
+
 function normalizeWishlistComment(comment, index, parentId = '') {
   const createdAt = cleanText(comment?.created_at || comment?.createdAt);
 
@@ -4938,6 +6025,23 @@ function normalizeWishlistComment(comment, index, parentId = '') {
     didGift: Boolean(comment?.did_gift ?? comment?.didGift ?? true),
     createdAt,
     createdLabel: formatWishlistCommentCreatedLabel(createdAt),
+    sortOrder: index,
+  };
+}
+
+function normalizeGiveawayEntry(entry, index, parentId = '') {
+  const createdAt = cleanText(entry?.created_at || entry?.createdAt);
+
+  return {
+    id: cleanText(entry?.id) || `${parentId || 'giveaway'}-entry-${index + 1}`,
+    giveawayId: cleanText(entry?.giveaway_id || entry?.giveawayId || parentId),
+    entrantMemberId: cleanText(entry?.entrant_member_id || entry?.entrantMemberId),
+    entrantName: cleanText(entry?.entrant_name_snapshot || entry?.entrantName) || 'Member',
+    entrantInGameName: cleanText(entry?.entrant_in_game_name_snapshot || entry?.entrantInGameName),
+    createdByUserId: cleanText(entry?.created_by_user_id || entry?.createdByUserId),
+    createdByEmail: cleanText(entry?.created_by_email || entry?.createdByEmail).toLowerCase(),
+    createdAt,
+    createdLabel: formatGiveawayEntryCreatedLabel(createdAt),
     sortOrder: index,
   };
 }
@@ -4995,6 +6099,53 @@ function buildWishlistModel(values, index) {
     totalItems,
     outOfStoreCount,
     receivedCount,
+    sortOrder: index,
+  };
+}
+
+function buildGiveawayModel(values, index) {
+  const entries = normalizeGiveawayEntries(values.entries, values.id);
+  const title = cleanText(values.title) || `Giveaway ${index + 1}`;
+  const giverName = cleanText(values.giverName) || `Member ${index + 1}`;
+  const giverHomeLink = sanitizeUrl(cleanText(values.giverHomeLink));
+  const endsAt = cleanText(values.endsAt);
+  const winnerSelectedAt = cleanText(values.winnerSelectedAt);
+  const winnerName = cleanText(values.winnerName);
+  const isActive = values.isActive !== false;
+  const isOpen = isGiveawayOpen({ isActive, endsAt, winnerSelectedAt });
+  const hasWinner = Boolean(winnerName && winnerSelectedAt);
+  const status = getGiveawayStatusPresentation({ isActive, isOpen, hasWinner });
+
+  return {
+    id: cleanText(values.id) || `giveaway-${index + 1}`,
+    giverMemberId: cleanText(values.giverMemberId),
+    giverName,
+    giverInGameName: cleanText(values.giverInGameName),
+    giverHomeLink,
+    title,
+    itemText: cleanText(values.itemText) || 'Giveaway details coming soon.',
+    imageUrl: buildAssetUrl(values.imageUrl),
+    imagePath: cleanText(values.imagePath),
+    imageMimeType: cleanText(values.imageMimeType),
+    imageName: cleanText(values.imageName),
+    endsAt,
+    endsLabel: formatGiveawayEndsLabel(endsAt),
+    winnerMemberId: cleanText(values.winnerMemberId),
+    winnerName,
+    winnerInGameName: cleanText(values.winnerInGameName),
+    winnerSelectedAt,
+    winnerSelectedLabel: formatGiveawayWinnerLabel(winnerSelectedAt),
+    isActive,
+    isOpen,
+    hasWinner,
+    statusLabel: status.label,
+    statusTagClass: status.className,
+    entries,
+    entryCount: entries.length,
+    createdAt: cleanText(values.createdAt),
+    updatedAt: cleanText(values.updatedAt),
+    createdByUserId: cleanText(values.createdByUserId),
+    createdByEmail: cleanText(values.createdByEmail).toLowerCase(),
     sortOrder: index,
   };
 }
@@ -5104,6 +6255,189 @@ function formatWishlistCommentCreatedLabel(value) {
     hour: 'numeric',
     minute: '2-digit',
   });
+}
+
+function createDefaultGiveawayEndsAtLocal(now = new Date()) {
+  const next = new Date(now.getTime() + 3 * 24 * 60 * 60 * 1000);
+  next.setMinutes(0, 0, 0);
+
+  if (next.getHours() < 18) {
+    next.setHours(18);
+  }
+
+  return formatDateTimeLocalInput(next);
+}
+
+function formatDateTimeLocalInput(date) {
+  if (!(date instanceof Date) || Number.isNaN(date.getTime())) {
+    return '';
+  }
+
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}T${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+}
+
+function parseDateTimeLocalInputToIso(value) {
+  const normalizedValue = cleanText(value);
+
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(normalizedValue)) {
+    return '';
+  }
+
+  const parsedDate = new Date(normalizedValue);
+
+  if (Number.isNaN(parsedDate.getTime())) {
+    return '';
+  }
+
+  return parsedDate.toISOString();
+}
+
+function formatGiveawayEndsLabel(value) {
+  const normalizedValue = cleanText(value);
+
+  if (!normalizedValue) {
+    return 'End time not set';
+  }
+
+  const parsedDate = new Date(normalizedValue);
+
+  if (Number.isNaN(parsedDate.getTime())) {
+    return 'End time not set';
+  }
+
+  return parsedDate.toLocaleString('en-US', {
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    timeZoneName: 'short',
+  });
+}
+
+function formatGiveawayWinnerLabel(value) {
+  const normalizedValue = cleanText(value);
+
+  if (!normalizedValue) {
+    return '';
+  }
+
+  const parsedDate = new Date(normalizedValue);
+
+  if (Number.isNaN(parsedDate.getTime())) {
+    return '';
+  }
+
+  return `Picked ${parsedDate.toLocaleString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  })}`;
+}
+
+function formatGiveawayEntryCreatedLabel(value) {
+  const normalizedValue = cleanText(value);
+
+  if (!normalizedValue) {
+    return 'Entry saved';
+  }
+
+  const parsedDate = new Date(normalizedValue);
+
+  if (Number.isNaN(parsedDate.getTime())) {
+    return 'Entry saved';
+  }
+
+  return `Entered ${parsedDate.toLocaleString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  })}`;
+}
+
+function isGiveawayOpen({ isActive, endsAt, winnerSelectedAt }) {
+  if (!isActive || cleanText(winnerSelectedAt)) {
+    return false;
+  }
+
+  const parsedDate = new Date(cleanText(endsAt));
+  return !Number.isNaN(parsedDate.getTime()) && parsedDate.getTime() > Date.now();
+}
+
+function getGiveawayStatusPresentation({ isActive, isOpen, hasWinner }) {
+  if (hasWinner) {
+    return {
+      label: 'Winner picked',
+      className: 'tag--giveaway-winner',
+    };
+  }
+
+  if (isOpen) {
+    return {
+      label: 'Open',
+      className: 'tag--muted',
+    };
+  }
+
+  return {
+    label: isActive ? 'Ended' : 'Closed',
+    className: 'tag--giveaway-ended',
+  };
+}
+
+function formatGiveawayComposerIdentity(member) {
+  if (!member) {
+    return 'Claim your member invite first';
+  }
+
+  const memberName = cleanText(member.facebookName || member.displayName);
+  return member.inGameName ? `${memberName} • YoWorld: ${member.inGameName}` : memberName;
+}
+
+function formatGiveawayGiverLine(giveaway) {
+  return giveaway.giverInGameName
+    ? `${giveaway.giverName} • YoWorld: ${giveaway.giverInGameName}`
+    : giveaway.giverName;
+}
+
+function buildGiveawayEntrantExportText(giveaway) {
+  return giveaway.entries
+    .map((entry) => entry.entrantInGameName ? `${entry.entrantName} (${entry.entrantInGameName})` : entry.entrantName)
+    .join('\n');
+}
+
+async function copyTextToClipboard(text) {
+  const value = cleanText(text);
+
+  if (!value) {
+    throw new Error('There was nothing to copy.');
+  }
+
+  if (navigator?.clipboard?.writeText) {
+    await navigator.clipboard.writeText(value);
+    return;
+  }
+
+  const helper = document.createElement('textarea');
+  helper.value = value;
+  helper.setAttribute('readonly', 'readonly');
+  helper.style.position = 'fixed';
+  helper.style.opacity = '0';
+  document.body.appendChild(helper);
+  helper.select();
+  helper.setSelectionRange(0, helper.value.length);
+
+  try {
+    const didCopy = document.execCommand('copy');
+
+    if (!didCopy) {
+      throw new Error('Could not access the clipboard.');
+    }
+  } finally {
+    document.body.removeChild(helper);
+  }
 }
 
 function normalizeEventCount(value) {
