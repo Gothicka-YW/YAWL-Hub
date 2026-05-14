@@ -22,7 +22,8 @@ Use these files in order:
 18. Push `supabase/migrations/20260513000200_staff_posting_and_giveaway_rerolls.sql` after the giveaways migration if staff should also be able to post shared wish lists, events, and giveaways, and if giveaway winners should support rerolls.
 19. Push `supabase/migrations/20260513000300_winner_closes_giveaway.sql` after the reroll migration so winner selection also stamps the giveaway closed immediately.
 20. Push `supabase/migrations/20260513000400_chat_module.sql` after the winner-close migration to add the General, Giveaways, and Models chat rooms, admin moderation, and chat image uploads.
-21. Create or sign in to a Supabase Auth account that uses the same email as your `staff_permissions` row.
+21. Push `supabase/migrations/20260513000500_admin_chat_posting.sql` after the chat module migration so admins can post chat messages as any active member profile.
+22. Create or sign in to a Supabase Auth account that uses the same email as your `staff_permissions` row.
 
 Notes:
 
@@ -49,6 +50,7 @@ Notes:
 - `supabase/migrations/20260513000200_staff_posting_and_giveaway_rerolls.sql` reopens staff posting access for shared posts after the self-owned launch migration and adds the giveaway reroll RPC.
 - `supabase/migrations/20260513000300_winner_closes_giveaway.sql` updates the winner RPCs so the selected winner is posted and the giveaway is stamped closed at the same moment.
 - `supabase/migrations/20260513000400_chat_module.sql` adds fixed chat rooms, authenticated message reads, linked-member posting, admin moderation, and the chat image bucket.
+- `supabase/migrations/20260513000500_admin_chat_posting.sql` widens chat posting so admins can send messages on behalf of any active member profile.
 
 ## Supabase CLI Workflow
 
@@ -74,6 +76,7 @@ Apply the existing SQL files from the terminal:
 - Helper script, staff posting + giveaway rerolls: `./scripts/apply-supabase-sql.ps1 -Files supabase/migrations/20260513000200_staff_posting_and_giveaway_rerolls.sql`
 - Helper script, winner closes giveaway: `./scripts/apply-supabase-sql.ps1 -Files supabase/migrations/20260513000300_winner_closes_giveaway.sql`
 - Helper script, chat module: `./scripts/apply-supabase-sql.ps1 -Files supabase/migrations/20260513000400_chat_module.sql`
+- Helper script, admin chat posting follow-up: `./scripts/apply-supabase-sql.ps1 -Files supabase/migrations/20260513000500_admin_chat_posting.sql`
 - Helper script, full ordered set: `./scripts/apply-supabase-sql.ps1 -All`
 - Optional sample event seed: `./scripts/apply-supabase-sql.ps1 -Files supabase/09_seed_sample_event.sql`
 

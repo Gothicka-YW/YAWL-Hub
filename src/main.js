@@ -100,6 +100,7 @@ const ADMIN_WISHLIST_FIELD_MAP = {
   thank_you_note: 'thankYouNote',
 };
 const ADMIN_CHAT_FIELD_MAP = {
+  sender_member_id: 'memberId',
   channel_key: 'channelKey',
   message_text: 'messageText',
 };
@@ -1751,8 +1752,11 @@ function renderGiveaways() {
 }
 
 function renderChat() {
+  ensureChatComposerState();
+
   const activeChannel = getActiveChatChannel();
   const currentMessages = getChatMessages(activeChannel.key);
+  const composerState = getChatComposerState();
 
   return `
     <section class="panel-grid panel-grid--directory-page">
@@ -1765,7 +1769,7 @@ function renderChat() {
           </div>
           <span class="tag">${escapeHtml(`${currentMessages.length} in ${activeChannel.label}`)}</span>
         </div>
-        <p class="panel-lead">Use the channel tabs to switch between General, Giveaways, and Models. Linked members can post text or image messages, and admins can moderate the feed.</p>
+        <p class="panel-lead">Use the channel tabs to switch between General, Giveaways, and Models. Linked members can post text or image messages, admins can post as any active member, and admins can moderate the feed.</p>
       </article>
 
       <article class="panel panel--span-full">
@@ -1815,16 +1819,16 @@ function renderChat() {
           </div>
         </article>
 
-        ${renderChatComposer(activeChannel)}
+        ${renderChatComposer(activeChannel, composerState)}
       </div>
     </section>
   `;
 }
 
-function renderChatComposer(activeChannel) {
-  const linkedMember = getLinkedChatMember();
+function renderChatComposer(activeChannel, editorState = getChatComposerState()) {
   const form = state.admin.chatForm;
   const isBusy = state.admin.isBusy;
+  const canManagePosts = canModerateChatMessages();
 
   if (!state.admin.session) {
     return `
@@ -1844,7 +1848,22 @@ function renderChatComposer(activeChannel) {
     `;
   }
 
-  if (!linkedMember) {
+  if (!editorState.selectedMember) {
+    if (canManagePosts) {
+      return `
+        <article class="panel panel--announcement chat-composer-panel">
+          <div class="panel__heading">
+            <div>
+              <p class="eyebrow">Post a Message</p>
+              <h3>Load the member directory first</h3>
+            </div>
+          </div>
+          <p class="panel-lead">Chat posts still need an active member profile, even for admins. Load the live directory so the composer can assign this message correctly.</p>
+          ${renderAdminNotice()}
+        </article>
+      `;
+    }
+
     return `
       <article class="panel panel--announcement chat-composer-panel">
         <div class="panel__heading">
@@ -1862,6 +1881,8 @@ function renderChatComposer(activeChannel) {
     `;
   }
 
+  const selectedMember = editorState.selectedMember;
+
   return `
     <article class="panel chat-composer-panel">
       <div class="panel__heading">
@@ -1869,12 +1890,31 @@ function renderChatComposer(activeChannel) {
           <p class="eyebrow">Post a Message</p>
           <h3>Send to ${escapeHtml(activeChannel.label)}</h3>
         </div>
-        <span class="tag ${linkedMember.roleTagClass}">${escapeHtml(linkedMember.roleLabel)}</span>
+        <span class="tag ${selectedMember.roleTagClass}">${escapeHtml(selectedMember.roleLabel)}</span>
       </div>
-      <p class="panel-lead">Posting as ${escapeHtml(formatGiveawayComposerIdentity(linkedMember))}. Images can include PNG files.</p>
+      <p class="panel-lead">${escapeHtml(canManagePosts
+        ? 'Admins can post as any active member and moderate the feed below.'
+        : `Posting as ${formatGiveawayComposerIdentity(selectedMember)}. Images can include PNG files.`)}</p>
       ${renderAdminNotice()}
       <form class="admin-form chat-form" data-chat-form>
         <input type="hidden" name="channel_key" value="${escapeHtml(activeChannel.key)}">
+        ${canManagePosts
+          ? `
+              <label class="field-group">
+                <span>Post As</span>
+                <select class="text-input" name="sender_member_id">
+                  ${renderWishlistMemberOptions(editorState.availableMembers, form.memberId || selectedMember.id)}
+                </select>
+                <small class="field-help">Admins can post chat messages for any active member profile.</small>
+              </label>
+            `
+          : `
+              <label class="field-group">
+                <span>Post As</span>
+                <input class="text-input" type="text" value="${escapeHtml(formatGiveawayComposerIdentity(selectedMember))}" readonly>
+                <small class="field-help">This chat message stays tied to your claimed member profile.</small>
+              </label>
+            `}
         <label class="field-group field-group--wide">
           <span>Message</span>
           <textarea name="message_text" class="admin-textarea" maxlength="${CHAT_MESSAGE_MAX_LENGTH}" placeholder="Say hi, share an update, or drop a quick note for this room.">${escapeHtml(form.messageText)}</textarea>
@@ -3267,6 +3307,11 @@ function getLinkedChatMember() {
   return getLinkedWishlistMember();
 }
 
+function getChatEditorMembers() {
+  const linkedMember = getLinkedChatMember();
+  return canModerateChatMessages() ? getMembers() : (linkedMember ? [linkedMember] : []);
+}
+
 function getGiveawayEditorMembers() {
   const linkedMember = getLinkedGiveawayMember();
   return canManageGiveawayPosts() ? getMembers() : (linkedMember ? [linkedMember] : []);
@@ -3281,7 +3326,7 @@ function hasLinkedChatAccess() {
 }
 
 function canPostChatMessages() {
-  return hasLinkedChatAccess();
+  return canModerateChatMessages() || hasLinkedChatAccess();
 }
 
 function isChatMessageOwner(message) {
@@ -3308,6 +3353,41 @@ function isChatMessageOwner(message) {
 
 function canDeleteChatMessage(message) {
   return canModerateChatMessages() || isChatMessageOwner(message);
+}
+
+function getChatComposerState() {
+  const availableMembers = getChatEditorMembers();
+  const selectedMember = findMemberById(state.admin.chatForm.memberId)
+    || availableMembers[0]
+    || null;
+
+  return {
+    canEdit: canPostChatMessages(),
+    availableMembers,
+    selectedMember,
+  };
+}
+
+function ensureChatComposerState() {
+  const availableMembers = getChatEditorMembers();
+
+  if (!availableMembers.length) {
+    return;
+  }
+
+  const selectedMemberId = cleanText(state.admin.chatForm.memberId);
+
+  if (availableMembers.some((member) => member.id === selectedMemberId)) {
+    return;
+  }
+
+  loadChatFormForMember(availableMembers[0].id, state.activeChatChannel);
+}
+
+function loadChatFormForMember(memberId, channelKey = state.activeChatChannel) {
+  const normalizedMemberId = cleanText(memberId);
+  revokeChatPreviewUrl(state.admin.chatForm.imagePreviewUrl);
+  state.admin.chatForm = createEmptyChatForm(channelKey, normalizedMemberId);
 }
 
 function getWishlistEditorState() {
@@ -3817,9 +3897,10 @@ function createInviteClaimForm() {
   };
 }
 
-function createEmptyChatForm(channelKey = CHAT_CHANNELS[0].key) {
+function createEmptyChatForm(channelKey = CHAT_CHANNELS[0].key, memberId = '') {
   return {
     channelKey: normalizeChatChannelKey(channelKey),
+    memberId: cleanText(memberId),
     messageText: '',
     imageFile: null,
     imagePreviewUrl: '',
@@ -4298,8 +4379,9 @@ function resetGiveawayEditor() {
 }
 
 function resetChatComposer() {
+  const fallbackMemberId = cleanText(state.admin.chatForm.memberId || getChatComposerState().selectedMember?.id);
   revokeChatPreviewUrl(state.admin.chatForm.imagePreviewUrl);
-  state.admin.chatForm = createEmptyChatForm(state.activeChatChannel);
+  state.admin.chatForm = createEmptyChatForm(state.activeChatChannel, fallbackMemberId);
   setAdminNotice('Chat draft cleared.', 'muted');
 }
 
@@ -4460,6 +4542,12 @@ function syncChatDraftField(target) {
 
   if (target.name === 'chat_image_file') {
     handleChatImageSelection(target);
+    render();
+    return;
+  }
+
+  if (target.name === 'sender_member_id') {
+    syncAdminDraftState('chatForm', ADMIN_CHAT_FIELD_MAP, target);
     render();
     return;
   }
@@ -5014,10 +5102,16 @@ async function handleChatSubmit(event) {
     return;
   }
 
-  const linkedMember = getLinkedChatMember();
+  const editorState = getChatComposerState();
+  const selectedMember = editorState.selectedMember;
 
-  if (!linkedMember) {
-    setAdminNotice('Claim your member invite before posting in chat.', 'error');
+  if (!selectedMember) {
+    setAdminNotice(
+      canModerateChatMessages()
+        ? 'Choose an active member profile before posting in chat.'
+        : 'Claim your member invite before posting in chat.',
+      'error',
+    );
     render();
     return;
   }
@@ -5032,9 +5126,9 @@ async function handleChatSubmit(event) {
   try {
     const channelKey = normalizeChatChannelKey(formData.get('channel_key'));
     const imageUpload = selectedImageFile
-      ? await uploadChatImageFile(selectedImageFile, linkedMember, channelKey)
+      ? await uploadChatImageFile(selectedImageFile, selectedMember, channelKey)
       : null;
-    const payload = buildChatMessagePayload(formData, linkedMember, imageUpload);
+    const payload = buildChatMessagePayload(formData, selectedMember, imageUpload);
     const response = await supabaseFetch('chat_messages', {
       method: 'POST',
       useSession: true,
@@ -5049,7 +5143,7 @@ async function handleChatSubmit(event) {
     }
 
     revokeChatPreviewUrl(state.admin.chatForm.imagePreviewUrl);
-    state.admin.chatForm = createEmptyChatForm(channelKey);
+    state.admin.chatForm = createEmptyChatForm(channelKey, selectedMember.id);
     await loadLiveChatMessages();
     setAdminNotice(`Your message was sent to ${getChatChannelDefinition(channelKey).label}.`, 'success');
   } catch (error) {
