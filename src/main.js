@@ -5,10 +5,10 @@ const {
   giveaways: mockGiveaways,
   hangouts: mockHangouts,
   members: mockMembers,
+  modelPosts: mockModelPosts = [],
   wishlists: mockWishlists,
   sections: baseSections,
 } = window.YAWL_DATA;
-    modelPosts: mockModelPosts = [],
 const {
   consumeAuthRedirectSession,
   getStoredSession,
@@ -16,7 +16,6 @@ const {
   getValidSession,
   hasSupabaseConfig,
   sendPasswordResetEmail,
-  const GOTHICKA_ADMIN_EMAIL = 'ywa.paint@gmail.com';
   signInWithPassword,
   signOut,
   signUpWithPassword,
@@ -24,21 +23,22 @@ const {
   supabaseFetch,
   updatePassword,
   uploadStorageObject,
-  const ADMIN_YOMODELS_FIELD_MAP = {
-    theme_title: 'themeTitle',
-  };
 } = window.YAWL_SUPABASE;
+const GOTHICKA_ADMIN_EMAIL = 'ywa.paint@gmail.com';
+const ADMIN_YOMODELS_FIELD_MAP = {
+  theme_title: 'themeTitle',
+};
 const facebookGroupUrl = sanitizeUrl(String(window.YAWL_CONFIG.facebookGroupUrl || ''));
 const facebookThreadUrl = sanitizeUrl(String(dashboard.facebookThreadUrl || ''));
 const yoKeysWidgetUrl = sanitizeUrl(String(window.YAWL_CONFIG.yoKeysWidgetUrl || ''));
 
 const STORAGE_KEY = 'yawl-hub-private-tracker';
+const YOMODELS_IMAGE_BUCKET = 'yomodels-images';
+const YOMODELS_IMAGE_MAX_BYTES = 8 * 1024 * 1024;
+const YOMODELS_IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp']);
+const YOMODELS_THEME_TITLE_MAX_LENGTH = 120;
 const MONTH_NAME_TO_NUMBER = {
   january: 1,
-  const YOMODELS_IMAGE_BUCKET = 'yomodels-images';
-  const YOMODELS_IMAGE_MAX_BYTES = 8 * 1024 * 1024;
-  const YOMODELS_IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp']);
-  const YOMODELS_THEME_TITLE_MAX_LENGTH = 120;
   february: 2,
   march: 3,
   april: 4,
