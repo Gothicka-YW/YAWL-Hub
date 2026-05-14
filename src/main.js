@@ -7049,8 +7049,12 @@ async function getSupabaseErrorMessage(response, context = 'read') {
       return 'The gift comments table is not available yet. Run supabase/13_wishlist_image_uploads_and_comments.sql.';
     }
 
-    if (context === 'member-invite-create' || context === 'member-invite-claim') {
-      return 'The invite-code account claim schema is not available yet. Run supabase/14_invite_code_account_claims.sql.';
+    if (context === 'member-invite-create') {
+      return 'The invite-code create endpoint could not be reached. Refresh the app and try again. If it still fails, the deployed frontend may be stale.';
+    }
+
+    if (context === 'member-invite-claim') {
+      return 'The invite-code claim endpoint could not be reached. Refresh the app and try again. If it still fails, the deployed frontend may be stale.';
     }
 
     if (context === 'wishlists' || context === 'wishlist-write' || context === 'member-link') {
