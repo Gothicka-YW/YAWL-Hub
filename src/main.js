@@ -6940,6 +6940,20 @@ function startChatAutoRefresh() {
 }
 
 async function getSupabaseErrorMessage(response, context = 'read') {
+  let payload = null;
+
+  try {
+    payload = await response.json();
+  } catch {
+    payload = null;
+  }
+
+  const payloadMessage = cleanText(payload?.message || payload?.error_description || payload?.error || '');
+  const payloadHint = cleanText(payload?.hint || '');
+  const payloadSummary = payloadMessage
+    ? (payloadHint ? `${payloadMessage} ${payloadHint}` : payloadMessage)
+    : '';
+
   if (response.status === 401 || response.status === 403) {
     if (context === 'write') {
       return 'This signed-in account does not have permission to edit members yet.';
@@ -7010,11 +7024,11 @@ async function getSupabaseErrorMessage(response, context = 'read') {
     }
 
     if (context === 'member-invite-create') {
-      return 'This signed-in account does not have permission to create member invite codes yet.';
+      return payloadSummary || 'This signed-in account does not have permission to create member invite codes yet.';
     }
 
     if (context === 'member-invite-claim') {
-      return 'Sign in to the account that should claim this invite code, then try again.';
+      return payloadSummary || 'Sign in to the account that should claim this invite code, then try again.';
     }
 
     return 'The members table is still private. Run supabase/02_enable_member_directory_read.sql when you are ready for browser reads.';
@@ -7050,11 +7064,11 @@ async function getSupabaseErrorMessage(response, context = 'read') {
     }
 
     if (context === 'member-invite-create') {
-      return 'The invite-code create endpoint could not be reached. Refresh the app and try again. If it still fails, the deployed frontend may be stale.';
+      return payloadSummary || 'The invite-code create endpoint could not be reached. Refresh the app and try again. If it still fails, the deployed frontend may be stale.';
     }
 
     if (context === 'member-invite-claim') {
-      return 'The invite-code claim endpoint could not be reached. Refresh the app and try again. If it still fails, the deployed frontend may be stale.';
+      return payloadSummary || 'The invite-code claim endpoint could not be reached. Refresh the app and try again. If it still fails, the deployed frontend may be stale.';
     }
 
     if (context === 'wishlists' || context === 'wishlist-write' || context === 'member-link') {
@@ -7064,12 +7078,7 @@ async function getSupabaseErrorMessage(response, context = 'read') {
     return 'The members table is not available yet. Run the schema SQL and confirm the table exists in Supabase.';
   }
 
-  try {
-    const payload = await response.json();
-    return payload.message || payload.error_description || payload.error || `Supabase returned ${response.status}.`;
-  } catch {
-    return `Supabase returned ${response.status}.`;
-  }
+  return payloadSummary || `Supabase returned ${response.status}.`;
 }
 
 function normalizeMockMembers(sourceMembers) {
