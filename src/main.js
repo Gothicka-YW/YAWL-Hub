@@ -818,8 +818,6 @@ function renderSection() {
 function renderDashboard() {
   const upcomingMembers = getUpcomingBirthdayMembers(3);
   const dashboardCalendar = buildDashboardCalendarModel(getEvents(), getBirthdayMembers());
-  const featuredWishlists = getActiveWishlists(3);
-  const totalWishlists = getActiveWishlists().length;
   const dashboardStats = getDashboardStats(upcomingMembers);
 
   return `
@@ -833,12 +831,6 @@ function renderDashboard() {
           <span class="tag">${dashboard.weekLabel}</span>
         </div>
         <p class="panel-lead">${dashboard.announcement}</p>
-        <div class="button-row">
-          ${facebookGroupUrl ? `<a class="hero-button" href="${facebookGroupUrl}" target="_blank" rel="noreferrer">Open Group</a>` : ''}
-          ${facebookThreadUrl ? `<a class="hero-button hero-button--secondary" href="${facebookThreadUrl}" target="_blank" rel="noreferrer">Weekly Thread</a>` : ''}
-          ${yoKeysWidgetUrl ? `<a class="hero-button hero-button--secondary" href="${yoKeysWidgetUrl}" target="_blank" rel="noreferrer">Launch YoKeys</a>` : ''}
-          <button class="hero-button hero-button--secondary" type="button" data-section="notes">Personal Notes</button>
-        </div>
       </article>
 
       ${renderDashboardCalendarPanel(dashboardCalendar)}
@@ -856,56 +848,30 @@ function renderDashboard() {
           .join('')}
       </article>
 
-      <article class="panel dashboard-card dashboard-card--wishlist">
-        <div class="panel__heading">
-          <div>
-            <p class="eyebrow">Wish List Board</p>
-            <h3>Active this week</h3>
-          </div>
-          <span class="tag">${escapeHtml(`${totalWishlists} active`)}</span>
-        </div>
-        <p class="panel-lead">Weekly wish lists reset every Sunday ET. Members can post one PNG or JPEG board image, update that same weekly post, and collect gift comments below it.</p>
-        <div class="wish-grid wish-grid--dashboard">
-          ${featuredWishlists.length
-            ? featuredWishlists.map((wishlist) => renderWishlistPreviewCard(wishlist)).join('')
-            : `
-                <div class="wish-card">
-                  <p class="wish-card__name">No active wish lists yet</p>
-                  <p>Post the first weekly wish list to start the board.</p>
-                </div>
-              `}
-        </div>
-        <div class="button-row">
-          <button class="hero-button hero-button--secondary" type="button" data-section="wishlists">Open Wish List Board</button>
-        </div>
-      </article>
-
       ${renderLaunchpadPanel()}
 
-      <article class="panel dashboard-card dashboard-card--upcoming">
+      <article class="panel panel--directory dashboard-card dashboard-card--upcoming">
         <div class="panel__heading">
           <div>
             <p class="eyebrow">Upcoming</p>
-            <h3>Upcoming birthdays</h3>
+            <h3>Birthdays soon</h3>
           </div>
+          <span class="tag">${escapeHtml(`${upcomingMembers.length}`)}</span>
         </div>
-        <div class="stack-list">
+        <div class="dashboard-upcoming-list">
           ${upcomingMembers.length
             ? upcomingMembers
                 .map(
                   (member) => `
-                    <div class="list-row">
-                      <div>
-                        <strong>${escapeHtml(member.displayName)}</strong>
-                        <span>${escapeHtml(member.secondaryName || member.statusText)}</span>
-                      </div>
+                    <div class="dashboard-upcoming-item">
+                      <strong>${escapeHtml(member.displayName)}</strong>
                       <span>${escapeHtml(member.birthdayLabel)}</span>
                     </div>
                   `,
                 )
                 .join('')
             : `
-                <div class="list-row list-row--compact">
+                <div class="dashboard-upcoming-empty">
                   <span>${escapeHtml(state.memberSource === 'loading' ? 'Loading live member birthdays...' : 'No member birthdays available yet.')}</span>
                 </div>
               `}
@@ -957,25 +923,6 @@ function renderWishlists() {
         </div>
       </article>
     </section>
-  `;
-}
-
-function renderWishlistPreviewCard(wishlist) {
-  return `
-    <article class="wish-card wish-card--preview">
-      <div class="wish-card__media">
-        ${renderWishlistBoardMedia(wishlist, 'wish-card__image')}
-      </div>
-      <div class="wish-card__heading">
-        <p class="wish-card__name">${escapeHtml(wishlist.memberName)}</p>
-        <span class="tag">${escapeHtml(`${wishlist.commentCount} comments`)}</span>
-      </div>
-      <p>${escapeHtml(wishlist.statusNote || wishlist.summary)}</p>
-      <div class="wishlist-counts">
-        ${renderWishlistCountTag(`${wishlist.giftedCommentCount} gifted notes`, wishlist.giftedCommentCount > 0 ? 'wishlist-count--success' : '')}
-        ${renderWishlistCountTag(wishlist.lastUpdatedLabel, '')}
-      </div>
-    </article>
   `;
 }
 
