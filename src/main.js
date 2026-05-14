@@ -8,6 +8,7 @@ const {
   wishlists: mockWishlists,
   sections: baseSections,
 } = window.YAWL_DATA;
+    modelPosts: mockModelPosts = [],
 const {
   consumeAuthRedirectSession,
   getStoredSession,
@@ -15,6 +16,7 @@ const {
   getValidSession,
   hasSupabaseConfig,
   sendPasswordResetEmail,
+  const GOTHICKA_ADMIN_EMAIL = 'ywa.paint@gmail.com';
   signInWithPassword,
   signOut,
   signUpWithPassword,
@@ -22,6 +24,9 @@ const {
   supabaseFetch,
   updatePassword,
   uploadStorageObject,
+  const ADMIN_YOMODELS_FIELD_MAP = {
+    theme_title: 'themeTitle',
+  };
 } = window.YAWL_SUPABASE;
 const facebookGroupUrl = sanitizeUrl(String(window.YAWL_CONFIG.facebookGroupUrl || ''));
 const facebookThreadUrl = sanitizeUrl(String(dashboard.facebookThreadUrl || ''));
@@ -30,6 +35,10 @@ const yoKeysWidgetUrl = sanitizeUrl(String(window.YAWL_CONFIG.yoKeysWidgetUrl ||
 const STORAGE_KEY = 'yawl-hub-private-tracker';
 const MONTH_NAME_TO_NUMBER = {
   january: 1,
+  const YOMODELS_IMAGE_BUCKET = 'yomodels-images';
+  const YOMODELS_IMAGE_MAX_BYTES = 8 * 1024 * 1024;
+  const YOMODELS_IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp']);
+  const YOMODELS_THEME_TITLE_MAX_LENGTH = 120;
   february: 2,
   march: 3,
   april: 4,
@@ -170,6 +179,7 @@ const initialMembers = normalizeMockMembers(mockMembers);
 const initialEvents = normalizeMockEvents(mockHangouts);
 const initialWishlists = normalizeMockWishlists(mockWishlists, initialMembers);
 const initialGiveaways = normalizeMockGiveaways(mockGiveaways, initialMembers);
+const initialYoModelsPosts = normalizeMockYoModelsPosts(mockModelPosts);
 const initialChatMessages = normalizeMockChatMessages(mockChatMessages, initialMembers);
 
 const state = {
@@ -188,6 +198,9 @@ const state = {
   giveaways: initialGiveaways,
   giveawaySource: hasSupabaseConfig ? 'loading' : 'mock',
   giveawaySourceMessage: hasSupabaseConfig ? 'Supabase config detected. Loading live giveaways...' : getSupabaseStatus(),
+  modelPosts: hasSupabaseConfig ? [] : initialYoModelsPosts,
+  modelSource: hasSupabaseConfig ? 'loading' : 'mock',
+  modelSourceMessage: hasSupabaseConfig ? 'Supabase config detected. Loading YoModels...' : getSupabaseStatus(),
   chatMessages: hasSupabaseConfig ? [] : initialChatMessages,
   chatSource: hasSupabaseConfig ? 'loading' : 'mock',
   chatSourceMessage: hasSupabaseConfig ? 'Supabase config detected. Loading live group chats...' : getSupabaseStatus(),
@@ -202,6 +215,7 @@ void loadLiveMembers();
 void loadLiveEvents();
 void loadLiveWishlists();
 void loadLiveGiveaways();
+void loadLiveYoModels();
 void loadLiveChatMessages();
 void initializeAdminSession();
 startChatAutoRefresh();
@@ -211,6 +225,10 @@ app.addEventListener('click', async (event) => {
   if (navButton) {
     state.activeSection = navButton.dataset.section;
     render();
+
+    if (state.activeSection === 'models' && hasSupabaseConfig) {
+      void loadLiveYoModels();
+    }
 
     if (state.activeSection === 'chat' && hasSupabaseConfig) {
       void loadLiveChatMessages();
@@ -247,6 +265,7 @@ app.addEventListener('click', async (event) => {
     memberId,
     eventId,
     giveawayId,
+    modelId,
     messageId,
     chatChannel,
   } = actionButton.dataset;
@@ -307,6 +326,13 @@ app.addEventListener('click', async (event) => {
       resetGiveawayEditor();
       render();
       return;
+    case 'models-reset-form':
+      resetYoModelsComposer();
+      render();
+      return;
+    case 'models-refresh':
+      await loadLiveYoModels();
+      return;
     case 'chat-set-channel':
       state.activeChatChannel = normalizeChatChannelKey(chatChannel);
       state.admin.chatForm = {
@@ -348,6 +374,9 @@ app.addEventListener('click', async (event) => {
       return;
     case 'giveaway-deactivate':
       await deactivateGiveaway(giveawayId);
+      return;
+    case 'models-deactivate-post':
+      await deactivateYoModelsPost(modelId);
       return;
     case 'chat-delete-message':
       await deleteChatMessage(messageId);
@@ -437,6 +466,12 @@ app.addEventListener('submit', async (event) => {
   if (event.target.matches('[data-giveaway-form]')) {
     event.preventDefault();
     await handleGiveawaySubmit(event);
+    return;
+  }
+
+  if (event.target.matches('[data-models-form]')) {
+    event.preventDefault();
+    await handleYoModelsSubmit(event);
     return;
   }
 
@@ -637,6 +672,17 @@ function canModerateChatMessages() {
   return canManageMembers();
 }
 
+function canManageYoModels() {
+  const staffEmail = cleanText(state.admin.staffProfile?.email).toLowerCase();
+  const sessionEmail = cleanText(state.admin.session?.user?.email).toLowerCase();
+
+  return Boolean(
+    hasStaffProfile()
+    && staffEmail === GOTHICKA_ADMIN_EMAIL
+    && sessionEmail === GOTHICKA_ADMIN_EMAIL,
+  );
+}
+
 function canPostOwnEvents() {
   return Boolean(getLinkedEventMember());
 }
@@ -742,6 +788,8 @@ function renderSection() {
   switch (state.activeSection) {
     case 'account':
       return renderAccount();
+    case 'models':
+      return renderYoModels();
     case 'chat':
       return renderChat();
     case 'wishlists':
@@ -1748,6 +1796,168 @@ function renderGiveaways() {
         </div>
       </article>
     </section>
+  `;
+}
+
+function renderYoModels() {
+  const currentPosts = getYoModelsPosts();
+  const monthGroups = groupYoModelsPostsByMonth(currentPosts);
+
+  return `
+    <section class="panel-grid panel-grid--directory-page">
+      ${renderYoModelsSourceNotice()}
+      <article class="panel panel--announcement panel--span-full">
+        <div class="panel__heading">
+          <div>
+            <p class="eyebrow">YoModels</p>
+            <h3>Monthly model edits and themed looks</h3>
+          </div>
+          <span class="tag">${escapeHtml(`${currentPosts.length} posts`)}</span>
+        </div>
+        <p class="panel-lead">YoModels keeps Gothicka's edit drops in one place, ordered by posted date. The current month stays open, and older months collapse into an archive automatically.</p>
+      </article>
+
+      ${renderYoModelsComposer()}
+
+      <article class="panel panel--span-full models-feed-panel">
+        <div class="panel__heading">
+          <div>
+            <p class="eyebrow">Gallery</p>
+            <h3>Newest looks first</h3>
+          </div>
+          <div class="button-row">
+            <button class="hero-button hero-button--secondary" type="button" data-action="models-refresh">Refresh YoModels</button>
+          </div>
+        </div>
+        <div class="models-month-stack">
+          ${monthGroups.length
+            ? monthGroups.map((group) => renderYoModelsMonthGroup(group)).join('')
+            : `
+                <div class="list-row list-row--compact">
+                  <span>${escapeHtml(state.modelSource === 'loading' ? 'Loading YoModels...' : 'No YoModels posts have been published yet.')}</span>
+                </div>
+              `}
+        </div>
+      </article>
+    </section>
+  `;
+}
+
+function renderYoModelsComposer() {
+  const form = state.admin.modelsForm;
+  const isBusy = state.admin.isBusy;
+
+  if (!canManageYoModels()) {
+    return `
+      <article class="panel panel--announcement panel--span-full models-composer-panel">
+        <div class="panel__heading">
+          <div>
+            <p class="eyebrow">Publish</p>
+            <h3>Only Gothicka can post here</h3>
+          </div>
+        </div>
+        <p class="panel-lead">This module is read-only for everyone except the Gothicka admin account. Once a month ends, its posts collapse into the archive automatically.</p>
+        ${renderAdminNotice()}
+        <div class="button-row">
+          <button class="hero-button hero-button--secondary" type="button" data-section="account">Open Account</button>
+        </div>
+      </article>
+    `;
+  }
+
+  return `
+    <article class="panel panel--span-full models-composer-panel">
+      <div class="panel__heading">
+        <div>
+          <p class="eyebrow">Publish</p>
+          <h3>Post a new YoModels edit</h3>
+        </div>
+        <span class="tag tag--role-admin">Gothicka Only</span>
+      </div>
+      <p class="panel-lead">Theme titles are optional. The post date is captured automatically when you publish, and the image is required.</p>
+      ${renderAdminNotice()}
+      <form class="admin-form models-form" data-models-form>
+        <div class="form-grid">
+          <label class="field-group field-group--wide">
+            <span>Theme Title</span>
+            <input class="text-input" type="text" name="theme_title" maxlength="${YOMODELS_THEME_TITLE_MAX_LENGTH}" value="${escapeHtml(form.themeTitle)}" placeholder="Optional, for example: Moonlit Velvet" />
+            <small class="field-help">Optional. Leave blank if the image should stand on its own.</small>
+          </label>
+          <label class="field-group">
+            <span>Upload Picture</span>
+            <input class="text-input" type="file" name="models_image_file" accept="image/png,image/jpeg,image/webp">
+            <small class="field-help">Required. PNG, JPEG, or WebP up to ${Math.round(YOMODELS_IMAGE_MAX_BYTES / (1024 * 1024))} MB.</small>
+          </label>
+          <div class="field-group field-group--wide">
+            <span>Preview</span>
+            ${renderYoModelsImagePreview(form)}
+          </div>
+        </div>
+        <div class="button-row admin-form-actions">
+          <button class="hero-button" type="submit"${isBusy ? ' disabled' : ''}>${escapeHtml(isBusy ? 'Publishing...' : 'Publish YoModels Post')}</button>
+          <button class="hero-button hero-button--secondary" type="button" data-action="models-reset-form"${isBusy ? ' disabled' : ''}>Clear Form</button>
+        </div>
+      </form>
+    </article>
+  `;
+}
+
+function renderYoModelsImagePreview(form) {
+  const previewUrl = cleanText(form.imagePreviewUrl);
+  const imageName = cleanText(form.imageName);
+
+  if (!previewUrl) {
+    return `
+      <div class="models-preview">
+        <div class="giveaway-card__placeholder">
+          <strong>No picture selected</strong>
+          <span>Upload the finished edit and it will appear here before you publish.</span>
+        </div>
+      </div>
+    `;
+  }
+
+  return `
+    <div class="models-preview">
+      <img class="models-preview__image" src="${escapeHtml(previewUrl)}" alt="${escapeHtml(imageName || 'YoModels upload preview')}" loading="lazy">
+      <span class="muted">${escapeHtml(imageName || 'Selected YoModels image')}</span>
+    </div>
+  `;
+}
+
+function renderYoModelsMonthGroup(group) {
+  return `
+    <details class="models-month-group"${group.isCurrentMonth ? ' open' : ''}>
+      <summary class="models-month-summary">
+        <div>
+          <strong>${escapeHtml(group.monthLabel)}</strong>
+          <span class="directory-helper">${escapeHtml(group.isCurrentMonth ? 'Current month stays open' : 'Archived after month end')}</span>
+        </div>
+        <span class="tag">${escapeHtml(`${group.posts.length} posts`)}</span>
+      </summary>
+      <div class="models-post-grid">
+        ${group.posts.map((post) => renderYoModelsPostCard(post)).join('')}
+      </div>
+    </details>
+  `;
+}
+
+function renderYoModelsPostCard(post) {
+  return `
+    <article class="models-post-card">
+      <div class="models-post-card__header">
+        <div>
+          ${post.themeTitle ? `<h4 class="models-post-card__theme">${escapeHtml(post.themeTitle)}</h4>` : '<p class="eyebrow">YoModels Edit</p>'}
+          <span class="directory-helper">${escapeHtml(post.postedLabel)}</span>
+        </div>
+        ${canManageYoModels()
+          ? `<button class="tracker-button" type="button" data-action="models-deactivate-post" data-model-id="${escapeHtml(post.id)}">Hide Post</button>`
+          : ''}
+      </div>
+      <a class="models-post-card__image-link" href="${escapeHtml(post.imageUrl)}" target="_blank" rel="noreferrer">
+        <img class="models-post-card__image" src="${escapeHtml(post.imageUrl)}" alt="${escapeHtml(post.imageName || post.themeTitle || 'YoModels image')}" loading="lazy">
+      </a>
+    </article>
   `;
 }
 
@@ -3307,6 +3517,10 @@ function getLinkedChatMember() {
   return getLinkedWishlistMember();
 }
 
+function getYoModelsManagerMember() {
+  return findMemberByName('Gothicka') || null;
+}
+
 function getChatEditorMembers() {
   const linkedMember = getLinkedChatMember();
   return canModerateChatMessages() ? getMembers() : (linkedMember ? [linkedMember] : []);
@@ -3388,6 +3602,11 @@ function loadChatFormForMember(memberId, channelKey = state.activeChatChannel) {
   const normalizedMemberId = cleanText(memberId);
   revokeChatPreviewUrl(state.admin.chatForm.imagePreviewUrl);
   state.admin.chatForm = createEmptyChatForm(channelKey, normalizedMemberId);
+}
+
+function loadYoModelsForm() {
+  revokeYoModelsPreviewUrl(state.admin.modelsForm.imagePreviewUrl);
+  state.admin.modelsForm = createEmptyYoModelsForm();
 }
 
 function getWishlistEditorState() {
@@ -3495,6 +3714,12 @@ function getGiveaways() {
   return [...state.giveaways].sort(compareGiveaways);
 }
 
+function getYoModelsPosts() {
+  return [...state.modelPosts]
+    .filter((post) => post.isActive !== false)
+    .sort(compareYoModelsPosts);
+}
+
 function getActiveChatChannel() {
   return getChatChannelDefinition(state.activeChatChannel);
 }
@@ -3537,6 +3762,32 @@ function renderGiveawaySourceNotice() {
   return `
     <article class="panel panel--announcement panel--span-full">
       <p class="eyebrow">Giveaways Status</p>
+      <h3>${escapeHtml(title)}</h3>
+      <p class="panel-lead">${escapeHtml(message)}</p>
+    </article>
+  `;
+}
+
+function renderYoModelsSourceNotice() {
+  if (state.modelSource === 'live') {
+    return '';
+  }
+
+  let title = 'Using demo YoModels data';
+  let message = state.modelSourceMessage || getSupabaseStatus();
+
+  if (state.modelSource === 'loading') {
+    title = 'Loading YoModels';
+    message = 'The app found your Supabase config and is trying to load the live YoModels posts now.';
+  } else if (state.modelSource === 'restricted') {
+    title = 'YoModels is still private';
+  } else if (state.modelSource === 'error') {
+    title = 'Live YoModels is unavailable';
+  }
+
+  return `
+    <article class="panel panel--announcement panel--span-full">
+      <p class="eyebrow">YoModels Status</p>
       <h3>${escapeHtml(title)}</h3>
       <p class="panel-lead">${escapeHtml(message)}</p>
     </article>
@@ -3844,6 +4095,7 @@ function createDefaultAdminState() {
     generatedInvite: null,
     passwordResetForm: createPasswordResetForm(),
     wishlistForm: createEmptyWishlistForm(),
+    modelsForm: createEmptyYoModelsForm(),
     chatForm: createEmptyChatForm(CHAT_CHANNELS[0].key),
     giveawayForm: createEmptyGiveawayForm(),
     editingMemberId: '',
@@ -3894,6 +4146,17 @@ function createMemberInviteForm(memberId = '') {
 function createInviteClaimForm() {
   return {
     code: '',
+  };
+}
+
+function createEmptyYoModelsForm() {
+  return {
+    themeTitle: '',
+    imageFile: null,
+    imagePreviewUrl: '',
+    imageName: '',
+    imagePath: '',
+    imageMimeType: '',
   };
 }
 
@@ -4385,6 +4648,12 @@ function resetChatComposer() {
   setAdminNotice('Chat draft cleared.', 'muted');
 }
 
+function resetYoModelsComposer() {
+  revokeYoModelsPreviewUrl(state.admin.modelsForm.imagePreviewUrl);
+  state.admin.modelsForm = createEmptyYoModelsForm();
+  setAdminNotice('YoModels form cleared.', 'muted');
+}
+
 function syncAdminDraftField(target) {
   if (!(target instanceof Element) || !target.name) {
     return;
@@ -4407,6 +4676,11 @@ function syncAdminDraftField(target) {
 
   if (target.closest('[data-wishlist-form]')) {
     syncWishlistDraftField(target);
+    return;
+  }
+
+  if (target.closest('[data-models-form]')) {
+    syncYoModelsDraftField(target);
     return;
   }
 
@@ -4555,6 +4829,20 @@ function syncChatDraftField(target) {
   syncAdminDraftState('chatForm', ADMIN_CHAT_FIELD_MAP, target);
 }
 
+function syncYoModelsDraftField(target) {
+  if (!(target instanceof Element) || !target.name) {
+    return;
+  }
+
+  if (target.name === 'models_image_file') {
+    handleYoModelsImageSelection(target);
+    render();
+    return;
+  }
+
+  syncAdminDraftState('modelsForm', ADMIN_YOMODELS_FIELD_MAP, target);
+}
+
 function refreshGiveawayComposerPreview() {
   const previewRoot = app.querySelector('[data-giveaway-preview]');
 
@@ -4691,6 +4979,49 @@ function handleChatImageSelection(target) {
   setAdminNotice(`${file.name || 'Image'} is ready to send in chat.`, 'success');
 }
 
+function handleYoModelsImageSelection(target) {
+  const file = target instanceof HTMLInputElement && target.files ? target.files[0] : null;
+
+  revokeYoModelsPreviewUrl(state.admin.modelsForm.imagePreviewUrl);
+
+  if (!file) {
+    state.admin.modelsForm = {
+      ...state.admin.modelsForm,
+      imageFile: null,
+      imagePreviewUrl: '',
+      imageName: '',
+      imagePath: '',
+      imageMimeType: '',
+    };
+    return;
+  }
+
+  try {
+    validateYoModelsImageFile(file);
+  } catch (error) {
+    state.admin.modelsForm = {
+      ...state.admin.modelsForm,
+      imageFile: null,
+      imagePreviewUrl: '',
+      imageName: '',
+      imagePath: '',
+      imageMimeType: '',
+    };
+    setAdminNotice(error instanceof Error ? error.message : 'Choose a supported YoModels image first.', 'error');
+    return;
+  }
+
+  state.admin.modelsForm = {
+    ...state.admin.modelsForm,
+    imageFile: file,
+    imagePreviewUrl: URL.createObjectURL(file),
+    imageName: file.name || 'yomodels-image',
+    imagePath: '',
+    imageMimeType: file.type || '',
+  };
+  setAdminNotice(`${file.name || 'Image'} is ready for YoModels.`, 'success');
+}
+
 function validateWishlistImageFile(file) {
   if (!file) {
     throw new Error('Choose a PNG or JPEG wish list image before saving.');
@@ -4733,6 +5064,20 @@ function validateChatImageFile(file) {
   }
 }
 
+function validateYoModelsImageFile(file) {
+  if (!file) {
+    throw new Error('Choose an image before publishing to YoModels.');
+  }
+
+  if (!YOMODELS_IMAGE_TYPES.has(file.type)) {
+    throw new Error('YoModels uploads must be PNG, JPEG, or WebP images.');
+  }
+
+  if (file.size > YOMODELS_IMAGE_MAX_BYTES) {
+    throw new Error(`YoModels images must be ${Math.round(YOMODELS_IMAGE_MAX_BYTES / (1024 * 1024))} MB or smaller.`);
+  }
+}
+
 function revokeWishlistPreviewUrl(url) {
   if (!url || !String(url).startsWith('blob:')) {
     return;
@@ -4758,6 +5103,18 @@ function revokeGiveawayPreviewUrl(url) {
 }
 
 function revokeChatPreviewUrl(url) {
+  if (!url || !String(url).startsWith('blob:')) {
+    return;
+  }
+
+  try {
+    URL.revokeObjectURL(url);
+  } catch {
+    // Ignore stale object URLs.
+  }
+}
+
+function revokeYoModelsPreviewUrl(url) {
   if (!url || !String(url).startsWith('blob:')) {
     return;
   }
@@ -5089,6 +5446,57 @@ async function handleGiveawaySubmit(event) {
     setAdminNotice(wasEditing ? `${savedTitle} was updated.` : `${savedTitle} is now live on the giveaway board.`, 'success');
   } catch (error) {
     setAdminNotice(error instanceof Error ? error.message : 'Could not post that giveaway.', 'error');
+  } finally {
+    state.admin.isBusy = false;
+    render();
+  }
+}
+
+async function handleYoModelsSubmit(event) {
+  if (!state.admin.session) {
+    setAdminNotice('Sign in first to publish to YoModels.', 'error');
+    render();
+    return;
+  }
+
+  if (!canManageYoModels()) {
+    setAdminNotice('Only Gothicka can publish YoModels posts.', 'error');
+    render();
+    return;
+  }
+
+  const formData = new FormData(event.target);
+  const selectedImageFile = state.admin.modelsForm.imageFile;
+
+  state.admin.isBusy = true;
+  setAdminNotice('Publishing YoModels post...', 'muted');
+  render();
+
+  try {
+    const managerMember = getYoModelsManagerMember();
+    const imageUpload = selectedImageFile
+      ? await uploadYoModelsImageFile(selectedImageFile)
+      : null;
+    const payload = buildYoModelsPostPayload(formData, imageUpload);
+    const response = await supabaseFetch('yomodel_posts', {
+      method: 'POST',
+      useSession: true,
+      headers: {
+        Prefer: 'return=representation',
+      },
+      body: payload,
+    });
+
+    if (!response.ok) {
+      throw new Error(await getSupabaseErrorMessage(response, 'models-write'));
+    }
+
+    revokeYoModelsPreviewUrl(state.admin.modelsForm.imagePreviewUrl);
+    state.admin.modelsForm = createEmptyYoModelsForm();
+    await loadLiveYoModels();
+    setAdminNotice(`${managerMember?.displayName || 'Gothicka'} posted a new YoModels edit.`, 'success');
+  } catch (error) {
+    setAdminNotice(error instanceof Error ? error.message : 'Could not publish that YoModels post.', 'error');
   } finally {
     state.admin.isBusy = false;
     render();
@@ -5768,6 +6176,63 @@ async function deactivateGiveaway(giveawayId) {
   }
 }
 
+async function deactivateYoModelsPost(modelId) {
+  const post = getYoModelsPosts().find((entry) => entry.id === cleanText(modelId));
+
+  if (!post) {
+    setAdminNotice('That YoModels post could not be found.', 'error');
+    render();
+    return;
+  }
+
+  if (!canManageYoModels()) {
+    setAdminNotice('Only Gothicka can hide YoModels posts.', 'error');
+    render();
+    return;
+  }
+
+  if (!window.confirm(`Hide ${post.themeTitle || 'this YoModels post'}? It will be removed from the live gallery.`)) {
+    return;
+  }
+
+  state.admin.isBusy = true;
+  setAdminNotice('Hiding YoModels post...', 'muted');
+  render();
+
+  try {
+    const response = await supabaseFetch('yomodel_posts', {
+      method: 'PATCH',
+      query: new URLSearchParams({ id: `eq.${post.id}` }).toString(),
+      useSession: true,
+      headers: {
+        Prefer: 'return=representation',
+      },
+      body: {
+        is_active: false,
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error(await getSupabaseErrorMessage(response, 'models-write'));
+    }
+
+    if (post.imagePath && typeof storageFetch === 'function') {
+      await storageFetch(YOMODELS_IMAGE_BUCKET, post.imagePath, {
+        method: 'DELETE',
+        useSession: true,
+      }).catch(() => null);
+    }
+
+    await loadLiveYoModels();
+    setAdminNotice('YoModels post hidden.', 'success');
+  } catch (error) {
+    setAdminNotice(error instanceof Error ? error.message : 'Could not hide that YoModels post.', 'error');
+  } finally {
+    state.admin.isBusy = false;
+    render();
+  }
+}
+
 function buildMemberPayload(formData, currentMember) {
   const facebookName = cleanText(formData.get('facebook_name'));
 
@@ -5895,6 +6360,26 @@ async function uploadGiveawayImageFile(file, member, endsAtIso) {
   };
 }
 
+async function uploadYoModelsImageFile(file) {
+  validateYoModelsImageFile(file);
+
+  if (typeof uploadStorageObject !== 'function') {
+    throw new Error('Storage uploads are not available. Reload the app and try again.');
+  }
+
+  const objectPath = buildYoModelsImageStoragePath(file);
+  const upload = await uploadStorageObject(YOMODELS_IMAGE_BUCKET, objectPath, file, {
+    cacheControl: '3600',
+  });
+
+  return {
+    path: upload.path,
+    publicUrl: upload.publicUrl,
+    mimeType: file.type,
+    name: file.name || 'yomodels-image',
+  };
+}
+
 async function uploadChatImageFile(file, member, channelKey) {
   validateChatImageFile(file);
 
@@ -5938,6 +6423,18 @@ function buildGiveawayImageStoragePath(memberId, endsAtIso, file) {
   const endsSegment = cleanText(endsAtIso).replace(/[^0-9]/g, '').slice(0, 12) || 'open';
 
   return `${cleanText(memberId)}/${endsSegment}/${timestamp}-${cleanBaseName}.${extension}`;
+}
+
+function buildYoModelsImageStoragePath(file) {
+  const extension = file.type === 'image/png' ? 'png' : file.type === 'image/webp' ? 'webp' : 'jpg';
+  const cleanBaseName = cleanText(file.name)
+    .replace(/\.[^.]+$/, '')
+    .replace(/[^a-z0-9]+/gi, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 44) || 'yomodels';
+  const timestamp = new Date().toISOString().replace(/[^0-9]/g, '').slice(0, 14);
+
+  return `${getCurrentMonthKey()}/${timestamp}-${cleanBaseName}.${extension}`;
 }
 
 function buildChatImageStoragePath(memberId, channelKey, file) {
@@ -6019,6 +6516,27 @@ function buildGiveawayPayload(formData, member) {
     title,
     item_text: itemText,
     ends_at: endsAtIso,
+    is_active: true,
+  };
+}
+
+function buildYoModelsPostPayload(formData, imageUpload = null) {
+  const themeTitle = cleanText(formData.get('theme_title'));
+
+  if (themeTitle.length > YOMODELS_THEME_TITLE_MAX_LENGTH) {
+    throw new Error(`Theme titles must be ${YOMODELS_THEME_TITLE_MAX_LENGTH} characters or fewer.`);
+  }
+
+  if (!imageUpload?.publicUrl) {
+    throw new Error('Upload the YoModels picture before publishing.');
+  }
+
+  return {
+    theme_title: normalizeNullableText(themeTitle),
+    image_url: imageUpload.publicUrl,
+    image_path: normalizeNullableText(imageUpload.path),
+    image_mime_type: normalizeNullableText(imageUpload.mimeType),
+    image_name: normalizeNullableText(imageUpload.name),
     is_active: true,
   };
 }
@@ -6350,6 +6868,41 @@ async function loadLiveGiveaways() {
   render();
 }
 
+async function loadLiveYoModels() {
+  if (!hasSupabaseConfig) {
+    return;
+  }
+
+  try {
+    const query = new URLSearchParams({
+      select: 'id,theme_title,image_url,image_path,image_mime_type,image_name,is_active,posted_at,updated_at,created_by_user_id,created_by_email',
+      is_active: 'eq.true',
+      order: 'posted_at.desc',
+    }).toString();
+    const response = await supabaseFetch('yomodel_posts', {
+      query,
+      method: 'GET',
+    });
+
+    if (!response.ok) {
+      throw new Error(await getSupabaseErrorMessage(response, 'models'));
+    }
+
+    const rows = await response.json();
+
+    state.modelPosts = normalizeSupabaseYoModelsPosts(Array.isArray(rows) ? rows : []);
+    state.modelSource = 'live';
+    state.modelSourceMessage = `Loaded ${state.modelPosts.length} YoModels posts from Supabase.`;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Could not load YoModels.';
+    state.modelPosts = normalizeMockYoModelsPosts(mockModelPosts);
+    state.modelSource = /private|policy|permission|forbidden|unauthorized/i.test(message) ? 'restricted' : 'error';
+    state.modelSourceMessage = message;
+  }
+
+  render();
+}
+
 async function loadLiveChatMessages() {
   if (!hasSupabaseConfig) {
     return;
@@ -6408,6 +6961,10 @@ async function getSupabaseErrorMessage(response, context = 'read') {
       return 'This signed-in account does not have permission to edit members yet.';
     }
 
+    if (context === 'models-write') {
+      return 'Only Gothicka can publish or manage YoModels posts.';
+    }
+
     if (context === 'event-write') {
       return 'This signed-in account does not have permission to edit events yet.';
     }
@@ -6446,6 +7003,10 @@ async function getSupabaseErrorMessage(response, context = 'read') {
 
     if (context === 'giveaways' || context === 'giveaway-entries') {
       return 'The giveaway board is still private. Push supabase/migrations/20260513000100_giveaways.sql first.';
+    }
+
+    if (context === 'models') {
+      return 'The YoModels board is still private. Push supabase/migrations/20260514000100_yomodels_module.sql first.';
     }
 
     if (context === 'chat') {
@@ -6488,6 +7049,10 @@ async function getSupabaseErrorMessage(response, context = 'read') {
       return 'The giveaway tables are not available yet. Push supabase/migrations/20260513000100_giveaways.sql first.';
     }
 
+    if (context === 'models' || context === 'models-write') {
+      return 'The YoModels schema is not available yet. Push supabase/migrations/20260514000100_yomodels_module.sql first.';
+    }
+
     if (context === 'chat' || context === 'chat-write' || context === 'chat-delete') {
       return 'The chat schema is not available yet. Push supabase/migrations/20260513000400_chat_module.sql first.';
     }
@@ -6525,6 +7090,10 @@ function normalizeMockMembers(sourceMembers) {
 
 function normalizeMockWishlists(sourceWishlists, memberDirectory = []) {
   return sourceWishlists.map((wishlist, index) => normalizeMockWishlist(wishlist, index, memberDirectory));
+}
+
+function normalizeMockYoModelsPosts(sourcePosts = []) {
+  return sourcePosts.map((post, index) => normalizeMockYoModelsPost(post, index));
 }
 
 function normalizeMockChatMessages(sourceChatMessages, memberDirectory = []) {
@@ -6650,6 +7219,27 @@ function normalizeMockGiveaway(giveaway, index, memberDirectory = []) {
       updatedAt: cleanText(giveaway.updatedAt) || new Date(Date.now() - (index + 1) * 45 * 60 * 1000).toISOString(),
       createdByUserId: '',
       createdByEmail: '',
+    },
+    index,
+  );
+}
+
+function normalizeMockYoModelsPost(post, index) {
+  const createdAt = cleanText(post.createdAt) || new Date(Date.now() - index * 24 * 60 * 60 * 1000).toISOString();
+
+  return buildYoModelsPostModel(
+    {
+      id: cleanText(post.id) || `yomodels-post-${index + 1}`,
+      themeTitle: cleanText(post.themeTitle),
+      imageUrl: buildAssetUrl(post.imagePath || post.imageUrl),
+      imagePath: cleanText(post.imagePath),
+      imageMimeType: cleanText(post.imageMimeType),
+      imageName: cleanText(post.imageName),
+      postedAt: createdAt,
+      updatedAt: cleanText(post.updatedAt),
+      isActive: post.isActive !== false,
+      createdByUserId: '',
+      createdByEmail: GOTHICKA_ADMIN_EMAIL,
     },
     index,
   );
@@ -6791,8 +7381,31 @@ function normalizeSupabaseGiveaways(rows, entryRows = []) {
   ));
 }
 
+function normalizeSupabaseYoModelsPosts(rows = []) {
+  return rows.map((row, index) => normalizeSupabaseYoModelsPost(row, index));
+}
+
 function normalizeSupabaseChatMessages(rows) {
   return rows.map((row, index) => normalizeSupabaseChatMessage(row, index));
+}
+
+function normalizeSupabaseYoModelsPost(row, index) {
+  return buildYoModelsPostModel(
+    {
+      id: cleanText(row.id) || `yomodels-live-${index + 1}`,
+      themeTitle: cleanText(row.theme_title),
+      imageUrl: cleanText(row.image_url),
+      imagePath: cleanText(row.image_path),
+      imageMimeType: cleanText(row.image_mime_type),
+      imageName: cleanText(row.image_name),
+      postedAt: cleanText(row.posted_at),
+      updatedAt: cleanText(row.updated_at),
+      isActive: row.is_active !== false,
+      createdByUserId: cleanText(row.created_by_user_id),
+      createdByEmail: cleanText(row.created_by_email).toLowerCase(),
+    },
+    index,
+  );
 }
 
 function normalizeSupabaseChatMessage(row, index) {
@@ -7116,6 +7729,38 @@ function formatMonthYearLabel(year, monthIndex) {
   });
 }
 
+function getCurrentMonthKey(now = new Date()) {
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+}
+
+function getMonthKeyFromValue(value) {
+  const normalizedValue = cleanText(value);
+
+  if (!normalizedValue) {
+    return getCurrentMonthKey();
+  }
+
+  const parsedDate = new Date(normalizedValue);
+
+  if (Number.isNaN(parsedDate.getTime())) {
+    return getCurrentMonthKey();
+  }
+
+  return `${parsedDate.getFullYear()}-${String(parsedDate.getMonth() + 1).padStart(2, '0')}`;
+}
+
+function formatMonthLabelFromKey(monthKey) {
+  const match = cleanText(monthKey).match(/^(\d{4})-(\d{2})$/);
+
+  if (!match) {
+    return 'Current Month';
+  }
+
+  const year = Number.parseInt(match[1], 10);
+  const monthIndex = Number.parseInt(match[2], 10) - 1;
+  return formatMonthYearLabel(year, monthIndex);
+}
+
 function parseIsoDateParts(value) {
   const match = cleanText(value).match(/^(\d{4})-(\d{2})-(\d{2})$/);
 
@@ -7243,6 +7888,17 @@ function compareGiveaways(left, right) {
   }
 
   return left.title.localeCompare(right.title) || left.sortOrder - right.sortOrder;
+}
+
+function compareYoModelsPosts(left, right) {
+  const leftPostedAt = cleanText(left.postedAt) || '0000-00-00T00:00:00.000Z';
+  const rightPostedAt = cleanText(right.postedAt) || '0000-00-00T00:00:00.000Z';
+
+  if (leftPostedAt !== rightPostedAt) {
+    return rightPostedAt.localeCompare(leftPostedAt);
+  }
+
+  return left.sortOrder - right.sortOrder;
 }
 
 function compareChatMessages(left, right) {
@@ -7427,6 +8083,29 @@ function buildGiveawayModel(values, index) {
     updatedAt: cleanText(values.updatedAt),
     createdByUserId: cleanText(values.createdByUserId),
     createdByEmail: cleanText(values.createdByEmail).toLowerCase(),
+    sortOrder: index,
+  };
+}
+
+function buildYoModelsPostModel(values, index) {
+  const postedAt = cleanText(values.postedAt) || new Date().toISOString();
+  const monthKey = getMonthKeyFromValue(postedAt);
+
+  return {
+    id: cleanText(values.id) || `yomodels-post-${index + 1}`,
+    themeTitle: cleanText(values.themeTitle),
+    imageUrl: buildAssetUrl(values.imageUrl),
+    imagePath: cleanText(values.imagePath),
+    imageMimeType: cleanText(values.imageMimeType),
+    imageName: cleanText(values.imageName),
+    postedAt,
+    updatedAt: cleanText(values.updatedAt),
+    isActive: values.isActive !== false,
+    createdByUserId: cleanText(values.createdByUserId),
+    createdByEmail: cleanText(values.createdByEmail).toLowerCase(),
+    postedLabel: formatYoModelsPostedLabel(postedAt),
+    monthKey,
+    monthLabel: formatMonthLabelFromKey(monthKey),
     sortOrder: index,
   };
 }
@@ -7702,8 +8381,54 @@ function formatChatMessageCreatedLabel(value) {
   });
 }
 
+function formatYoModelsPostedLabel(value) {
+  const normalizedValue = cleanText(value);
+
+  if (!normalizedValue) {
+    return 'Posted just now';
+  }
+
+  const parsedDate = new Date(normalizedValue);
+
+  if (Number.isNaN(parsedDate.getTime())) {
+    return 'Posted just now';
+  }
+
+  return `Posted ${parsedDate.toLocaleString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  })}`;
+}
+
 function formatChatMessageText(value) {
   return escapeHtml(cleanText(value)).replace(/\n/g, '<br>');
+}
+
+function groupYoModelsPostsByMonth(posts = []) {
+  const groups = new Map();
+
+  posts.forEach((post) => {
+    const monthKey = cleanText(post.monthKey) || getCurrentMonthKey();
+    const currentGroup = groups.get(monthKey) || {
+      monthKey,
+      monthLabel: formatMonthLabelFromKey(monthKey),
+      posts: [],
+    };
+    currentGroup.posts.push(post);
+    groups.set(monthKey, currentGroup);
+  });
+
+  const currentMonthKey = getCurrentMonthKey();
+
+  return [...groups.values()]
+    .sort((left, right) => right.monthKey.localeCompare(left.monthKey))
+    .map((group) => ({
+      ...group,
+      posts: [...group.posts].sort(compareYoModelsPosts),
+      isCurrentMonth: group.monthKey === currentMonthKey,
+    }));
 }
 
 function isGiveawayOpen({ isActive, endsAt, winnerSelectedAt }) {

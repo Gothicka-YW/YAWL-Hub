@@ -5,6 +5,7 @@ window.YAWL_DATA = {
     { id: 'members', label: 'Members' },
     { id: 'birthdays', label: 'Birthdays' },
     { id: 'giveaways', label: 'Giveaways' },
+    { id: 'models', label: 'YoModels' },
     { id: 'chat', label: 'Chat' },
     { id: 'hangouts', label: 'Events' },
     { id: 'notes', label: 'My Notes' },
@@ -180,6 +181,27 @@ window.YAWL_DATA = {
       senderName: 'Lark Wisp',
       messageText: 'Posting a cottage-core look later. Soft florals and gold shoes are finally matching the room set.',
       createdAt: '2026-05-13T14:20:00.000Z',
+    },
+  ],
+
+  modelPosts: [
+    {
+      id: 'model-post-1',
+      themeTitle: 'Moonlit Velvet',
+      imagePath: 'headless-home.png',
+      createdAt: '2026-05-14T02:15:00.000Z',
+    },
+    {
+      id: 'model-post-2',
+      themeTitle: 'Rose Parlor Revival',
+      imagePath: 'Example Wish Lists/gothicka.jpg',
+      createdAt: '2026-05-02T18:30:00.000Z',
+    },
+    {
+      id: 'model-post-3',
+      themeTitle: '',
+      imagePath: 'Example Wish Lists/jessi.jpg',
+      createdAt: '2026-04-18T21:05:00.000Z',
     },
   ],
 

@@ -1413,6 +1413,97 @@ textarea {
   flex: 1 1 180px;
 }
 
+.models-feed-panel,
+.models-composer-panel,
+.models-month-stack {
+  display: grid;
+  gap: 1rem;
+}
+
+.models-month-group {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-xl);
+  background: rgba(255, 252, 247, 0.82);
+  overflow: hidden;
+}
+
+.models-month-group[open] {
+  box-shadow: var(--shadow-soft);
+}
+
+.models-month-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1rem 1.1rem;
+  cursor: pointer;
+  list-style: none;
+}
+
+.models-month-summary::-webkit-details-marker {
+  display: none;
+}
+
+.models-month-summary strong {
+  display: block;
+  margin-bottom: 0.18rem;
+}
+
+.models-post-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 1rem;
+  padding: 0 1rem 1rem;
+}
+
+.models-post-card {
+  display: grid;
+  gap: 0.85rem;
+  padding: 1rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.94), rgba(249, 241, 232, 0.92)),
+    var(--panel-strong);
+}
+
+.models-post-card__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.models-post-card__theme {
+  margin: 0;
+}
+
+.models-post-card__image-link {
+  display: block;
+}
+
+.models-post-card__image,
+.models-preview__image {
+  display: block;
+  width: 100%;
+  max-height: 520px;
+  object-fit: contain;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: rgba(255, 255, 255, 0.9);
+}
+
+.models-preview {
+  display: grid;
+  gap: 0.55rem;
+  min-height: 260px;
+  padding: 0.75rem;
+  border: 1px dashed rgba(200, 90, 68, 0.24);
+  border-radius: var(--radius-xl);
+  background: rgba(255, 252, 247, 0.72);
+}
+
 .chat-layout {
   display: grid;
   grid-template-columns: minmax(0, 1.2fr) minmax(320px, 0.8fr);
@@ -1837,6 +1928,12 @@ textarea:focus {
   .chat-layout {
     grid-template-columns: 1fr;
   }
+
+  .models-post-card__header,
+  .models-month-summary {
+    flex-direction: column;
+    align-items: flex-start;
+  }
 }
 
 @media (max-width: 720px) {
@@ -1960,6 +2057,11 @@ textarea:focus {
   .chat-channel-tabs {
     display: grid;
     grid-template-columns: 1fr;
+  }
+
+  .models-post-grid {
+    grid-template-columns: 1fr;
+    padding: 0 0.75rem 0.75rem;
   }
 
   .wishlist-card__media {

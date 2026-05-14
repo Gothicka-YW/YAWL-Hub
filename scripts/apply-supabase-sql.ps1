@@ -52,7 +52,8 @@ $orderedRepoFiles = @(
   'supabase\migrations\20260513000200_staff_posting_and_giveaway_rerolls.sql',
   'supabase\migrations\20260513000300_winner_closes_giveaway.sql',
   'supabase\migrations\20260513000400_chat_module.sql',
-  'supabase\migrations\20260513000500_admin_chat_posting.sql'
+  'supabase\migrations\20260513000500_admin_chat_posting.sql',
+  'supabase\migrations\20260514000100_yomodels_module.sql'
 )
 
 if ($All) {
