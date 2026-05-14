@@ -7014,7 +7014,7 @@ async function getSupabaseErrorMessage(response, context = 'read') {
     }
 
     if (context === 'member-invite-claim') {
-      return 'This invite code flow is not available yet. Apply the invite-code SQL migration and try again.';
+      return 'Sign in to the account that should claim this invite code, then try again.';
     }
 
     return 'The members table is still private. Run supabase/02_enable_member_directory_read.sql when you are ready for browser reads.';
