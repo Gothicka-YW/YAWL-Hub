@@ -435,7 +435,40 @@ button {
 }
 
 .stats-grid--dashboard {
+  grid-template-columns: 1fr;
+  gap: 0;
+  padding: 0.45rem 0.9rem;
   align-content: start;
+}
+
+.stats-grid--dashboard .stat-card {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  min-height: 0;
+  padding: 0.72rem 0.15rem;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
+  background: transparent;
+}
+
+.stats-grid--dashboard .stat-card:last-child {
+  border-bottom: 0;
+}
+
+.stats-grid--dashboard .stat-card span {
+  font-size: 0.92rem;
+  font-weight: 500;
+  line-height: 1.35;
+  color: var(--ink);
+}
+
+.stats-grid--dashboard .stat-card strong {
+  flex: 0 0 auto;
+  font-size: 1.22rem;
+  line-height: 1;
 }
 
 .stats-grid--compact {
