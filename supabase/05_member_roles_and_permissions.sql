@@ -23,14 +23,26 @@ create table if not exists public.staff_permissions (
   can_manage_roles boolean not null default false,
   can_manage_events boolean not null default false,
   is_active boolean not null default true,
+  icon_url text,
+  icon_path text,
+  icon_mime_type text,
+  icon_name text,
   notes text,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   constraint staff_permissions_role_check
-    check (permission_role in ('admin', 'event_planner', 'moderator', 'helper'))
+    check (permission_role in ('admin', 'event_planner', 'moderator', 'helper')),
+  constraint staff_permissions_icon_url_check
+    check (icon_url is null or icon_url ~* '^https?://'),
+  constraint staff_permissions_icon_mime_type_check
+    check (icon_mime_type is null or icon_mime_type in ('image/png', 'image/jpeg', 'image/webp'))
 );
 
 comment on table public.staff_permissions is 'Authenticated staff accounts that can manage the YoAngels directory later.';
+comment on column public.staff_permissions.icon_url is 'Public URL for the staff account square icon shown in account/admin identity surfaces.';
+comment on column public.staff_permissions.icon_path is 'Storage object path for the staff account icon.';
+comment on column public.staff_permissions.icon_mime_type is 'Uploaded MIME type for the staff account icon.';
+comment on column public.staff_permissions.icon_name is 'Original or processed file name for the staff account icon.';
 
 drop trigger if exists set_staff_permissions_updated_at on public.staff_permissions;
 

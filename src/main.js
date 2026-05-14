@@ -37,6 +37,7 @@ const DASHBOARD_ANNOUNCEMENT_MAX_LENGTH = 500;
 
 const STORAGE_KEY = 'yawl-hub-private-tracker';
 const MEMBER_ICON_BUCKET = 'member-icons';
+const STAFF_ICON_BUCKET = 'staff-icons';
 const MEMBER_ICON_TARGET_SIZE = 256;
 const MEMBER_ICON_MAX_BYTES = 1024 * 1024;
 const MEMBER_ICON_SOURCE_MAX_BYTES = 10 * 1024 * 1024;
@@ -316,6 +317,13 @@ app.addEventListener('click', async (event) => {
     case 'member-icon-remove':
       await handleMemberIconRemove();
       return;
+    case 'staff-icon-clear-selection':
+      resetStaffIconSelection();
+      render();
+      return;
+    case 'staff-icon-remove':
+      await handleStaffIconRemove();
+      return;
     case 'admin-edit-event':
       beginEditingEvent(eventId);
       render();
@@ -465,6 +473,11 @@ app.addEventListener('change', (event) => {
     return;
   }
 
+  if (event.target.matches('[data-staff-icon-input]')) {
+    void handleStaffIconSelection(event.target);
+    return;
+  }
+
   syncAdminDraftField(event.target);
 });
 
@@ -544,6 +557,12 @@ app.addEventListener('submit', async (event) => {
   if (event.target.matches('[data-member-icon-form]')) {
     event.preventDefault();
     await handleMemberIconSubmit(event);
+    return;
+  }
+
+  if (event.target.matches('[data-staff-icon-form]')) {
+    event.preventDefault();
+    await handleStaffIconSubmit(event);
   }
 });
 
@@ -2943,6 +2962,7 @@ function renderAccount() {
       ${renderAdminSessionPanel()}
       ${state.admin.isRecoveryMode ? renderPasswordRecoveryPanel() : ''}
       ${!getLinkedWishlistMember() ? renderMemberInviteClaimPanel() : ''}
+      ${hasStaffProfile() ? renderStaffIconPanel() : ''}
       ${getLinkedWishlistMember() ? renderMemberIconPanel() : ''}
       ${renderAccountInfoPanel()}
       ${hasAdminToolsAccess() ? renderAdminLaunchPanel() : ''}
@@ -3106,12 +3126,21 @@ function renderAdminSessionPanel() {
   const sessionEmail = cleanText(state.admin.session?.user?.email || '');
   const isStaff = hasStaffProfile();
   const linkedMember = getLinkedWishlistMember();
+  const sessionDisplayName = cleanText(staffProfile?.displayName || linkedMember?.displayName || 'Member Account');
+  const sessionAvatarUrl = isStaff
+    ? cleanText(staffProfile?.iconUrl)
+    : cleanText(linkedMember?.iconUrl);
 
   return `
     <article class="panel panel--announcement">
       <p class="eyebrow">Account Session</p>
-      <h3>${escapeHtml(staffProfile?.displayName || 'Member Account')}</h3>
-      <p class="panel-lead">${escapeHtml(sessionEmail || 'No active session email found.')}</p>
+      <div class="member-identity member-identity--md account-session__identity">
+        ${renderMemberAvatar({ name: sessionDisplayName, imageUrl: sessionAvatarUrl, size: 'lg' })}
+        <div class="member-identity__copy">
+          <h3>${escapeHtml(sessionDisplayName)}</h3>
+          <span class="member-identity__detail">${escapeHtml(sessionEmail || 'No active session email found.')}</span>
+        </div>
+      </div>
       ${renderAdminNotice()}
       <div class="permission-badges">
         ${isStaff ? renderPermissionBadges(staffProfile) : '<span class="tag tag--muted">Member account</span>'}
@@ -3156,8 +3185,12 @@ function renderAccountInfoPanel() {
           <span>Create an account for private features, then claim your member invite to unlock self-service posting.</span>
         </div>
         <div class="list-row list-row--compact">
-          <strong>Square icon</strong>
+          <strong>Member icon</strong>
           <span>After your member profile is linked, you can upload one square icon that follows your name across chat, wish lists, giveaways, and the directory.</span>
+        </div>
+        <div class="list-row list-row--compact">
+          <strong>Staff icon</strong>
+          <span>Signed-in staff accounts can also upload a separate staff/admin icon for the account session and admin identity surfaces.</span>
         </div>
         <div class="list-row list-row--compact">
           <strong>Staff editing</strong>
@@ -3212,11 +3245,84 @@ function renderMemberIconPanel() {
   `;
 }
 
+function renderStaffIconPanel() {
+  const staffProfile = state.admin.staffProfile;
+  const form = state.admin.staffIconForm;
+  const previewUrl = cleanText(form.previewUrl || staffProfile?.iconUrl);
+  const previewName = cleanText(form.name || staffProfile?.iconName || 'Current staff icon');
+  const hasDraft = Boolean(form.file);
+  const hasCurrentIcon = Boolean(cleanText(staffProfile?.iconUrl));
+
+  if (!staffProfile) {
+    return '';
+  }
+
+  return `
+    <article class="panel panel--announcement">
+      <div class="panel__heading">
+        <div>
+          <p class="eyebrow">Staff Icon</p>
+          <h3>Upload your staff account icon</h3>
+        </div>
+        <span class="tag">256 x 256 square</span>
+      </div>
+      <p class="panel-lead">This icon is tied to your staff account and appears on your account session card and future admin identity surfaces. It stays separate from any linked member icon.</p>
+      <form class="admin-form" data-staff-icon-form>
+        <div class="form-grid">
+          <label class="field-group field-group--wide">
+            <span>Icon Upload</span>
+            <input class="text-input" type="file" name="staff_icon_file" accept="image/png,image/jpeg,image/webp" data-staff-icon-input>
+            <small class="field-help">PNG, JPEG, or WebP. The app will crop the center and save a ${MEMBER_ICON_TARGET_SIZE} x ${MEMBER_ICON_TARGET_SIZE} px square under ${Math.round(MEMBER_ICON_MAX_BYTES / 1024)} KB.</small>
+          </label>
+          <div class="field-group field-group--wide">
+            <span>Preview</span>
+            ${renderStaffIconPreview(staffProfile, previewUrl, previewName)}
+          </div>
+        </div>
+        <div class="button-row admin-form-actions">
+          <button class="hero-button" type="submit"${state.admin.isBusy || !hasDraft ? ' disabled' : ''}>${escapeHtml(state.admin.isBusy ? 'Saving Staff Icon...' : 'Save Staff Icon')}</button>
+          <button class="hero-button hero-button--secondary" type="button" data-action="staff-icon-clear-selection"${hasDraft ? '' : ' disabled'}>Clear Selection</button>
+          ${hasCurrentIcon ? `<button class="hero-button hero-button--secondary" type="button" data-action="staff-icon-remove"${state.admin.isBusy ? ' disabled' : ''}>Remove Current Staff Icon</button>` : ''}
+        </div>
+      </form>
+    </article>
+  `;
+}
+
 function renderMemberIconPreview(member, previewUrl, previewName) {
+  return renderIdentityIconPreview(
+    {
+      id: cleanText(member?.id),
+      name: cleanText(member?.displayName),
+      imageUrl: cleanText(member?.iconUrl),
+    },
+    previewUrl,
+    previewName,
+    `${cleanText(member?.displayName) || 'Linked member'} will use this icon everywhere the shared member identity appears.`,
+  );
+}
+
+function renderStaffIconPreview(staffProfile, previewUrl, previewName) {
+  return renderIdentityIconPreview(
+    {
+      name: cleanText(staffProfile?.displayName),
+      imageUrl: cleanText(staffProfile?.iconUrl),
+    },
+    previewUrl,
+    previewName,
+    `${cleanText(staffProfile?.displayName) || 'This staff account'} will use this icon on the staff session card and admin identity surfaces.`,
+  );
+}
+
+function renderIdentityIconPreview(identity, previewUrl, previewName, usageMessage) {
+  const identityName = cleanText(identity?.name) || 'Account';
+  const identityId = cleanText(identity?.id);
+  const fallbackImageUrl = cleanText(identity?.imageUrl);
+
   if (!previewUrl) {
     return `
       <div class="member-icon-preview member-icon-preview--empty">
-        ${renderMemberAvatar({ memberId: cleanText(member?.id), name: cleanText(member?.displayName), size: 'lg' })}
+        ${renderMemberAvatar({ memberId: identityId, name: identityName, imageUrl: fallbackImageUrl, size: 'lg' })}
         <div class="member-icon-preview__copy">
           <strong>No icon uploaded yet</strong>
           <span>Choose an image and the app will prepare a square preview here before you save it live.</span>
@@ -3227,10 +3333,10 @@ function renderMemberIconPreview(member, previewUrl, previewName) {
 
   return `
     <div class="member-icon-preview">
-      ${renderMemberAvatar({ memberId: cleanText(member?.id), name: cleanText(member?.displayName), imageUrl: previewUrl, size: 'lg' })}
+      ${renderMemberAvatar({ memberId: identityId, name: identityName, imageUrl: previewUrl, size: 'lg' })}
       <div class="member-icon-preview__copy">
-        <strong>${escapeHtml(previewName || 'Member icon preview')}</strong>
-        <span>${escapeHtml(cleanText(member?.displayName) || 'Linked member')} will use this icon everywhere the shared member identity appears.</span>
+        <strong>${escapeHtml(previewName || 'Icon preview')}</strong>
+        <span>${escapeHtml(usageMessage)}</span>
       </div>
     </div>
   `;
@@ -4335,6 +4441,7 @@ function createDefaultAdminState() {
     generatedInvite: null,
     passwordResetForm: createPasswordResetForm(),
     memberIconForm: createEmptyMemberIconForm(),
+    staffIconForm: createEmptyMemberIconForm(),
     wishlistForm: createEmptyWishlistForm(),
     modelsForm: createEmptyYoModelsForm(),
     chatForm: createEmptyChatForm(CHAT_CHANNELS[0].key),
@@ -4551,7 +4658,7 @@ async function loadStaffProfile() {
   }
 
   const query = new URLSearchParams({
-    select: 'email,display_name,permission_role,can_manage_members,can_manage_roles,can_manage_events,is_active,notes',
+    select: '*',
     email: `eq.${state.admin.session.user.email}`,
   }).toString();
   const response = await supabaseFetch('staff_permissions', {
@@ -4654,6 +4761,10 @@ function normalizeStaffProfile(profile) {
     canManageEvents: Boolean(profile.can_manage_events),
     isActive: Boolean(profile.is_active),
     notes: cleanText(profile.notes),
+    iconUrl: sanitizeUrl(cleanText(profile.icon_url || profile.iconUrl)),
+    iconPath: cleanText(profile.icon_path || profile.iconPath),
+    iconMimeType: cleanText(profile.icon_mime_type || profile.iconMimeType),
+    iconName: cleanText(profile.icon_name || profile.iconName),
   };
 }
 
@@ -4850,6 +4961,7 @@ async function handleAdminAnnouncementSubmit(event) {
 
 async function handleAdminSignOut() {
   revokeMemberIconPreviewUrl(state.admin.memberIconForm.previewUrl);
+  revokeMemberIconPreviewUrl(state.admin.staffIconForm.previewUrl);
   await signOut();
   state.admin = createDefaultAdminState();
   state.admin.isReady = true;
@@ -4998,6 +5110,156 @@ async function handleMemberIconRemove() {
   }
 }
 
+async function handleStaffIconSubmit() {
+  const staffProfile = state.admin.staffProfile;
+  const iconDraft = state.admin.staffIconForm;
+
+  if (!state.admin.session) {
+    setAdminNotice('Sign in before uploading a staff icon.', 'error');
+    render();
+    return;
+  }
+
+  if (!staffProfile) {
+    setAdminNotice('Only staff accounts can upload a staff icon.', 'error');
+    render();
+    return;
+  }
+
+  if (!iconDraft.file) {
+    setAdminNotice('Choose an icon image before saving it.', 'error');
+    render();
+    return;
+  }
+
+  const previousIconPath = cleanText(staffProfile.iconPath);
+  let upload = null;
+
+  state.admin.isBusy = true;
+  setAdminNotice('Saving your staff icon...', 'muted');
+  render();
+
+  try {
+    upload = await uploadStaffIconFile(iconDraft.file, staffProfile);
+
+    const response = await supabaseFetch('rpc/set_staff_icon', {
+      method: 'POST',
+      useSession: true,
+      body: {
+        p_staff_email: staffProfile.email,
+        p_icon_url: upload.publicUrl,
+        p_icon_path: upload.path,
+        p_icon_mime_type: upload.mimeType,
+        p_icon_name: upload.name,
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error(await getSupabaseErrorMessage(response, 'staff-icon'));
+    }
+
+    const rows = await response.json();
+    const savedRow = Array.isArray(rows) ? rows[0] : rows;
+
+    if (savedRow) {
+      state.admin.staffProfile = normalizeStaffProfile(savedRow);
+    }
+
+    if (previousIconPath && previousIconPath !== upload.path && typeof storageFetch === 'function') {
+      await storageFetch(STAFF_ICON_BUCKET, previousIconPath, {
+        method: 'DELETE',
+        useSession: true,
+      }).catch(() => null);
+    }
+
+    resetStaffIconSelection(false);
+    setAdminNotice('Your staff icon is now live for this account.', 'success');
+  } catch (error) {
+    if (upload?.path && typeof storageFetch === 'function') {
+      await storageFetch(STAFF_ICON_BUCKET, upload.path, {
+        method: 'DELETE',
+        useSession: true,
+      }).catch(() => null);
+    }
+
+    setAdminNotice(error instanceof Error ? error.message : 'Could not save that staff icon.', 'error');
+  } finally {
+    state.admin.isBusy = false;
+    render();
+  }
+}
+
+async function handleStaffIconRemove() {
+  const staffProfile = state.admin.staffProfile;
+  const previousIconPath = cleanText(staffProfile?.iconPath);
+
+  if (!state.admin.session) {
+    setAdminNotice('Sign in before removing a staff icon.', 'error');
+    render();
+    return;
+  }
+
+  if (!staffProfile) {
+    setAdminNotice('Only staff accounts can change a staff icon.', 'error');
+    render();
+    return;
+  }
+
+  if (!staffProfile.iconUrl) {
+    setAdminNotice('There is no saved staff icon to remove.', 'error');
+    render();
+    return;
+  }
+
+  if (!window.confirm('Remove your current staff icon? Your initials will show until you upload a new one.')) {
+    return;
+  }
+
+  state.admin.isBusy = true;
+  setAdminNotice('Removing your staff icon...', 'muted');
+  render();
+
+  try {
+    const response = await supabaseFetch('rpc/set_staff_icon', {
+      method: 'POST',
+      useSession: true,
+      body: {
+        p_staff_email: staffProfile.email,
+        p_icon_url: null,
+        p_icon_path: null,
+        p_icon_mime_type: null,
+        p_icon_name: null,
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error(await getSupabaseErrorMessage(response, 'staff-icon'));
+    }
+
+    const rows = await response.json();
+    const savedRow = Array.isArray(rows) ? rows[0] : rows;
+
+    if (savedRow) {
+      state.admin.staffProfile = normalizeStaffProfile(savedRow);
+    }
+
+    if (previousIconPath && typeof storageFetch === 'function') {
+      await storageFetch(STAFF_ICON_BUCKET, previousIconPath, {
+        method: 'DELETE',
+        useSession: true,
+      }).catch(() => null);
+    }
+
+    resetStaffIconSelection(false);
+    setAdminNotice('Your staff icon was removed.', 'success');
+  } catch (error) {
+    setAdminNotice(error instanceof Error ? error.message : 'Could not remove that staff icon.', 'error');
+  } finally {
+    state.admin.isBusy = false;
+    render();
+  }
+}
+
 function beginEditingMember(memberId) {
   const member = getMembers().find((entry) => entry.id === memberId);
 
@@ -5111,6 +5373,15 @@ function resetMemberIconSelection() {
   revokeMemberIconPreviewUrl(state.admin.memberIconForm.previewUrl);
   state.admin.memberIconForm = createEmptyMemberIconForm();
   setAdminNotice('Member icon selection cleared.', 'muted');
+}
+
+function resetStaffIconSelection(shouldNotify = true) {
+  revokeMemberIconPreviewUrl(state.admin.staffIconForm.previewUrl);
+  state.admin.staffIconForm = createEmptyMemberIconForm();
+
+  if (shouldNotify) {
+    setAdminNotice('Staff icon selection cleared.', 'muted');
+  }
 }
 
 function resetChatComposer() {
@@ -5525,6 +5796,38 @@ async function handleMemberIconSelection(target) {
     setAdminNotice('Your icon preview is ready to save.', 'success');
   } catch (error) {
     state.admin.memberIconForm = createEmptyMemberIconForm();
+    setAdminNotice(error instanceof Error ? error.message : 'Could not prepare that icon image.', 'error');
+  }
+
+  render();
+}
+
+async function handleStaffIconSelection(target) {
+  const file = target instanceof HTMLInputElement && target.files ? target.files[0] : null;
+
+  revokeMemberIconPreviewUrl(state.admin.staffIconForm.previewUrl);
+
+  if (!file) {
+    state.admin.staffIconForm = createEmptyMemberIconForm();
+    render();
+    return;
+  }
+
+  setAdminNotice('Preparing your staff icon preview...', 'muted');
+  render();
+
+  try {
+    const preparedFile = await prepareMemberIconFile(file);
+    state.admin.staffIconForm = {
+      file: preparedFile,
+      previewUrl: URL.createObjectURL(preparedFile),
+      name: preparedFile.name || 'staff-icon',
+      path: '',
+      mimeType: preparedFile.type || '',
+    };
+    setAdminNotice('Your staff icon preview is ready to save.', 'success');
+  } catch (error) {
+    state.admin.staffIconForm = createEmptyMemberIconForm();
     setAdminNotice(error instanceof Error ? error.message : 'Could not prepare that icon image.', 'error');
   }
 
@@ -6990,6 +7293,26 @@ async function uploadMemberIconFile(file, member) {
   };
 }
 
+async function uploadStaffIconFile(file, staffProfile) {
+  validateMemberIconFile(file);
+
+  if (typeof uploadStorageObject !== 'function') {
+    throw new Error('Storage uploads are not available. Reload the app and try again.');
+  }
+
+  const objectPath = buildStaffIconStoragePath(staffProfile.email, file);
+  const upload = await uploadStorageObject(STAFF_ICON_BUCKET, objectPath, file, {
+    cacheControl: '3600',
+  });
+
+  return {
+    path: upload.path,
+    publicUrl: upload.publicUrl,
+    mimeType: file.type,
+    name: file.name || 'staff-icon',
+  };
+}
+
 async function prepareMemberIconFile(file) {
   validateMemberIconSourceFile(file);
 
@@ -7060,6 +7383,19 @@ function buildMemberIconStoragePath(memberId, file) {
   const timestamp = new Date().toISOString().replace(/[^0-9]/g, '').slice(0, 14);
 
   return `${cleanText(memberId)}/profile/${timestamp}-${cleanBaseName}.${extension}`;
+}
+
+function buildStaffIconStoragePath(email, file) {
+  const extension = file.type === 'image/png' ? 'png' : file.type === 'image/webp' ? 'webp' : 'jpg';
+  const cleanBaseName = cleanText(file.name)
+    .replace(/\.[^.]+$/, '')
+    .replace(/[^a-z0-9]+/gi, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 40) || 'staff-icon';
+  const timestamp = new Date().toISOString().replace(/[^0-9]/g, '').slice(0, 14);
+  const emailSegment = cleanText(email).toLowerCase();
+
+  return `${emailSegment}/profile/${timestamp}-${cleanBaseName}.${extension}`;
 }
 
 function buildWishlistImageStoragePath(memberId, weekStartDate, file) {

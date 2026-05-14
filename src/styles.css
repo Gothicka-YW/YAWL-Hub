@@ -929,11 +929,54 @@ textarea {
   line-height: 1.45;
 }
 
+.account-session__identity {
+  margin: 0.2rem 0 0.78rem;
+}
+
+.account-session__identity .member-avatar--lg,
+.member-icon-preview .member-avatar--lg,
+.member-icon-preview--empty .member-avatar--lg {
+  width: 2.9rem;
+  height: 2.9rem;
+}
+
 .permission-badges {
   display: flex;
   flex-wrap: wrap;
   gap: 0.55rem;
   margin: 0.6rem 0 0.85rem;
+}
+
+.member-icon-preview,
+.member-icon-preview--empty {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 0.78rem;
+  padding: 0.82rem 0.88rem;
+  border: 1px solid rgba(92, 73, 51, 0.12);
+  border-radius: var(--radius-lg);
+  background: rgba(255, 255, 255, 0.78);
+}
+
+.member-icon-preview--empty {
+  background: rgba(255, 252, 247, 0.7);
+}
+
+.member-icon-preview__copy {
+  display: grid;
+  gap: 0.22rem;
+  min-width: 0;
+}
+
+.member-icon-preview__copy strong {
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
+
+.member-icon-preview__copy span {
+  color: var(--muted);
+  line-height: 1.42;
 }
 
 .admin-form-actions {
@@ -2417,6 +2460,12 @@ textarea:focus {
   .hero-button,
   .tracker-button {
     width: 100%;
+  }
+
+  .member-icon-preview,
+  .member-icon-preview--empty {
+    grid-template-columns: 1fr;
+    justify-items: start;
   }
 
   .launch-tile {
