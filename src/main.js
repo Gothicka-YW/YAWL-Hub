@@ -631,7 +631,7 @@ function getSectionTitle() {
 }
 
 function getSections() {
-  const visibleSections = [...baseSections];
+  const visibleSections = baseSections.filter((section) => section.id !== 'birthdays');
 
   if (hasAdminToolsAccess()) {
     visibleSections.push({ id: 'admin', label: 'Admin Tools' });
@@ -641,6 +641,11 @@ function getSections() {
 }
 
 function ensureValidActiveSection() {
+  if (state.activeSection === 'birthdays') {
+    state.activeSection = 'dashboard';
+    return;
+  }
+
   const visibleSectionIds = new Set(getSections().map((section) => section.id));
 
   if (!visibleSectionIds.has(state.activeSection)) {
@@ -796,8 +801,6 @@ function renderSection() {
       return renderWishlists();
     case 'members':
       return renderMembers();
-    case 'birthdays':
-      return renderBirthdays();
     case 'giveaways':
       return renderGiveaways();
     case 'hangouts':
@@ -3063,7 +3066,7 @@ function renderAdminLaunchPanel() {
   const liveTools = [];
 
   if (canManageMembers()) {
-    liveTools.push('member directory and birthdays');
+    liveTools.push('member directory');
   }
 
   if (canManageEvents()) {
@@ -3113,7 +3116,7 @@ function renderAdminEditorPanel() {
         </div>
         <span class="tag">${escapeHtml(isEditing ? 'Editing selected member' : 'New active member')}</span>
       </div>
-      <p class="panel-lead">Use Facebook names as the primary label. Set the YoWorld name as the gift-confirmation name and add birthdays here for the shared birthday board.</p>
+      <p class="panel-lead">Use Facebook names as the primary label. Set the YoWorld name as the gift-confirmation name, and birthdays will flow into the dashboard and shared calendar automatically.</p>
       <form class="admin-form" data-admin-member-form>
         <div class="form-grid">
           <label class="field-group">
@@ -3131,7 +3134,7 @@ function renderAdminEditorPanel() {
           <label class="field-group">
             <span>Birthday</span>
             <input class="text-input" type="text" name="birthday_raw" value="${escapeHtml(form.birthdayRaw)}" placeholder="September 6" />
-            <small class="field-help">Use the Month Day format so it shows correctly on the birthdays page.</small>
+            <small class="field-help">Use the Month Day format so it shows correctly in the birthday highlights and calendar.</small>
           </label>
           <label class="field-group">
             <span>Visible Role</span>

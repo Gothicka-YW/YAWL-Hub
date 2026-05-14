@@ -3,7 +3,6 @@ window.YAWL_DATA = {
     { id: 'dashboard', label: 'This Week' },
     { id: 'wishlists', label: 'Wish Lists' },
     { id: 'members', label: 'Members' },
-    { id: 'birthdays', label: 'Birthdays' },
     { id: 'giveaways', label: 'Giveaways' },
     { id: 'models', label: 'YoModels' },
     { id: 'chat', label: 'Chat' },
