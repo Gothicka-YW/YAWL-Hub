@@ -1,5 +1,6 @@
 const {
   adminChecklist,
+  chatMessages: mockChatMessages = [],
   dashboard,
   giveaways: mockGiveaways,
   hangouts: mockHangouts,
@@ -17,6 +18,7 @@ const {
   signInWithPassword,
   signOut,
   signUpWithPassword,
+  storageFetch,
   supabaseFetch,
   updatePassword,
   uploadStorageObject,
@@ -97,6 +99,10 @@ const ADMIN_WISHLIST_FIELD_MAP = {
   status_note: 'statusNote',
   thank_you_note: 'thankYouNote',
 };
+const ADMIN_CHAT_FIELD_MAP = {
+  channel_key: 'channelKey',
+  message_text: 'messageText',
+};
 const ADMIN_GIVEAWAY_FIELD_MAP = {
   giver_member_id: 'memberId',
   title: 'title',
@@ -130,6 +136,28 @@ const WISHLIST_IMAGE_TYPES = new Set(['image/png', 'image/jpeg']);
 const GIVEAWAY_IMAGE_BUCKET = 'giveaway-images';
 const GIVEAWAY_IMAGE_MAX_BYTES = 8 * 1024 * 1024;
 const GIVEAWAY_IMAGE_TYPES = new Set(['image/png', 'image/jpeg']);
+const CHAT_CHANNELS = [
+  {
+    key: 'general',
+    label: 'General',
+    description: 'Everyday group chat for the whole hub.',
+  },
+  {
+    key: 'giveaways',
+    label: 'Giveaways',
+    description: 'Use this room for giveaway reminders, entry updates, and winner chatter.',
+  },
+  {
+    key: 'models',
+    label: 'Models',
+    description: 'Share looks, model inspiration, and outfit screenshots with the group.',
+  },
+];
+const CHAT_IMAGE_BUCKET = 'chat-images';
+const CHAT_IMAGE_MAX_BYTES = 8 * 1024 * 1024;
+const CHAT_IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp']);
+const CHAT_MESSAGE_MAX_LENGTH = 2000;
+const CHAT_AUTO_REFRESH_MS = 20000;
 
 const defaultPrivateState = {
   notes: '',
@@ -141,6 +169,7 @@ const initialMembers = normalizeMockMembers(mockMembers);
 const initialEvents = normalizeMockEvents(mockHangouts);
 const initialWishlists = normalizeMockWishlists(mockWishlists, initialMembers);
 const initialGiveaways = normalizeMockGiveaways(mockGiveaways, initialMembers);
+const initialChatMessages = normalizeMockChatMessages(mockChatMessages, initialMembers);
 
 const state = {
   activeSection: 'dashboard',
@@ -158,6 +187,10 @@ const state = {
   giveaways: initialGiveaways,
   giveawaySource: hasSupabaseConfig ? 'loading' : 'mock',
   giveawaySourceMessage: hasSupabaseConfig ? 'Supabase config detected. Loading live giveaways...' : getSupabaseStatus(),
+  chatMessages: hasSupabaseConfig ? [] : initialChatMessages,
+  chatSource: hasSupabaseConfig ? 'loading' : 'mock',
+  chatSourceMessage: hasSupabaseConfig ? 'Supabase config detected. Loading live group chats...' : getSupabaseStatus(),
+  activeChatChannel: CHAT_CHANNELS[0].key,
   admin: createDefaultAdminState(),
 };
 
@@ -168,13 +201,20 @@ void loadLiveMembers();
 void loadLiveEvents();
 void loadLiveWishlists();
 void loadLiveGiveaways();
+void loadLiveChatMessages();
 void initializeAdminSession();
+startChatAutoRefresh();
 
 app.addEventListener('click', async (event) => {
   const navButton = event.target.closest('[data-section]');
   if (navButton) {
     state.activeSection = navButton.dataset.section;
     render();
+
+    if (state.activeSection === 'chat' && hasSupabaseConfig) {
+      void loadLiveChatMessages();
+    }
+
     return;
   }
 
@@ -201,7 +241,14 @@ app.addEventListener('click', async (event) => {
     return;
   }
 
-  const { action, memberId, eventId, giveawayId } = actionButton.dataset;
+  const {
+    action,
+    memberId,
+    eventId,
+    giveawayId,
+    messageId,
+    chatChannel,
+  } = actionButton.dataset;
 
   switch (action) {
     case 'members-clear-filters':
@@ -259,6 +306,21 @@ app.addEventListener('click', async (event) => {
       resetGiveawayEditor();
       render();
       return;
+    case 'chat-set-channel':
+      state.activeChatChannel = normalizeChatChannelKey(chatChannel);
+      state.admin.chatForm = {
+        ...state.admin.chatForm,
+        channelKey: state.activeChatChannel,
+      };
+      render();
+      return;
+    case 'chat-reset-form':
+      resetChatComposer();
+      render();
+      return;
+    case 'chat-refresh':
+      await loadLiveChatMessages();
+      return;
     case 'admin-refresh-session':
       await initializeAdminSession(true);
       return;
@@ -285,6 +347,9 @@ app.addEventListener('click', async (event) => {
       return;
     case 'giveaway-deactivate':
       await deactivateGiveaway(giveawayId);
+      return;
+    case 'chat-delete-message':
+      await deleteChatMessage(messageId);
       return;
     default:
       return;
@@ -371,6 +436,12 @@ app.addEventListener('submit', async (event) => {
   if (event.target.matches('[data-giveaway-form]')) {
     event.preventDefault();
     await handleGiveawaySubmit(event);
+    return;
+  }
+
+  if (event.target.matches('[data-chat-form]')) {
+    event.preventDefault();
+    await handleChatSubmit(event);
     return;
   }
 
@@ -561,6 +632,10 @@ function canManageGiveawayPosts() {
   return canManageMembers() || canManageEvents();
 }
 
+function canModerateChatMessages() {
+  return canManageMembers();
+}
+
 function canPostOwnEvents() {
   return Boolean(getLinkedEventMember());
 }
@@ -666,6 +741,8 @@ function renderSection() {
   switch (state.activeSection) {
     case 'account':
       return renderAccount();
+    case 'chat':
+      return renderChat();
     case 'wishlists':
       return renderWishlists();
     case 'members':
@@ -1670,6 +1747,207 @@ function renderGiveaways() {
         </div>
       </article>
     </section>
+  `;
+}
+
+function renderChat() {
+  const activeChannel = getActiveChatChannel();
+  const currentMessages = getChatMessages(activeChannel.key);
+
+  return `
+    <section class="panel-grid panel-grid--directory-page">
+      ${renderChatSourceNotice()}
+      <article class="panel panel--announcement panel--span-full">
+        <div class="panel__heading">
+          <div>
+            <p class="eyebrow">Chat</p>
+            <h3>Live room tabs for the YAWL Hub</h3>
+          </div>
+          <span class="tag">${escapeHtml(`${currentMessages.length} in ${activeChannel.label}`)}</span>
+        </div>
+        <p class="panel-lead">Use the channel tabs to switch between General, Giveaways, and Models. Linked members can post text or image messages, and admins can moderate the feed.</p>
+      </article>
+
+      <article class="panel panel--span-full">
+        <div class="panel__heading">
+          <div>
+            <p class="eyebrow">Channels</p>
+            <h3>${escapeHtml(activeChannel.label)}</h3>
+          </div>
+          <div class="button-row">
+            <button class="hero-button hero-button--secondary" type="button" data-action="chat-refresh">Refresh Chat</button>
+          </div>
+        </div>
+        <p class="panel-lead">${escapeHtml(activeChannel.description)}</p>
+        <div class="chat-channel-tabs" role="tablist" aria-label="Chat channels">
+          ${CHAT_CHANNELS.map((channel) => `
+            <button
+              class="chat-channel-tab${channel.key === activeChannel.key ? ' chat-channel-tab--active' : ''}"
+              type="button"
+              role="tab"
+              aria-selected="${channel.key === activeChannel.key ? 'true' : 'false'}"
+              data-action="chat-set-channel"
+              data-chat-channel="${escapeHtml(channel.key)}"
+            >
+              ${escapeHtml(channel.label)}
+            </button>
+          `).join('')}
+        </div>
+      </article>
+
+      <div class="chat-layout panel--span-full">
+        <article class="panel chat-feed-panel">
+          <div class="panel__heading">
+            <div>
+              <p class="eyebrow">Messages</p>
+              <h3>${escapeHtml(`${activeChannel.label} Feed`)}</h3>
+            </div>
+            <span class="tag">${escapeHtml(`${currentMessages.length} messages`)}</span>
+          </div>
+          <div class="chat-feed">
+            ${currentMessages.length
+              ? currentMessages.map((message) => renderChatMessageCard(message)).join('')
+              : `
+                  <div class="list-row list-row--compact">
+                    <span>${escapeHtml(state.chatSource === 'loading' ? 'Loading live chat...' : `No messages in ${activeChannel.label} yet.`)}</span>
+                  </div>
+                `}
+          </div>
+        </article>
+
+        ${renderChatComposer(activeChannel)}
+      </div>
+    </section>
+  `;
+}
+
+function renderChatComposer(activeChannel) {
+  const linkedMember = getLinkedChatMember();
+  const form = state.admin.chatForm;
+  const isBusy = state.admin.isBusy;
+
+  if (!state.admin.session) {
+    return `
+      <article class="panel panel--announcement chat-composer-panel">
+        <div class="panel__heading">
+          <div>
+            <p class="eyebrow">Post a Message</p>
+            <h3>Sign in to join chat</h3>
+          </div>
+        </div>
+        <p class="panel-lead">Chat is tied to your YAWL Hub account so messages stay attached to the right member profile.</p>
+        ${renderAdminNotice()}
+        <div class="button-row">
+          <button class="hero-button" type="button" data-section="account">Open Account</button>
+        </div>
+      </article>
+    `;
+  }
+
+  if (!linkedMember) {
+    return `
+      <article class="panel panel--announcement chat-composer-panel">
+        <div class="panel__heading">
+          <div>
+            <p class="eyebrow">Post a Message</p>
+            <h3>Claim your member invite first</h3>
+          </div>
+        </div>
+        <p class="panel-lead">Ask an admin for your invite code, then claim your member profile from Account before posting in the chat rooms.</p>
+        ${renderAdminNotice()}
+        <div class="button-row">
+          <button class="hero-button hero-button--secondary" type="button" data-section="account">Open Account</button>
+        </div>
+      </article>
+    `;
+  }
+
+  return `
+    <article class="panel chat-composer-panel">
+      <div class="panel__heading">
+        <div>
+          <p class="eyebrow">Post a Message</p>
+          <h3>Send to ${escapeHtml(activeChannel.label)}</h3>
+        </div>
+        <span class="tag ${linkedMember.roleTagClass}">${escapeHtml(linkedMember.roleLabel)}</span>
+      </div>
+      <p class="panel-lead">Posting as ${escapeHtml(formatGiveawayComposerIdentity(linkedMember))}. Images can include PNG files.</p>
+      ${renderAdminNotice()}
+      <form class="admin-form chat-form" data-chat-form>
+        <input type="hidden" name="channel_key" value="${escapeHtml(activeChannel.key)}">
+        <label class="field-group field-group--wide">
+          <span>Message</span>
+          <textarea name="message_text" class="admin-textarea" maxlength="${CHAT_MESSAGE_MAX_LENGTH}" placeholder="Say hi, share an update, or drop a quick note for this room.">${escapeHtml(form.messageText)}</textarea>
+          <small class="field-help">You can send text, an image, or both.</small>
+        </label>
+        <label class="field-group">
+          <span>Image Upload</span>
+          <input class="text-input" type="file" name="chat_image_file" accept="image/png,image/jpeg,image/webp">
+          <small class="field-help">Optional. PNG, JPEG, or WebP up to ${Math.round(CHAT_IMAGE_MAX_BYTES / (1024 * 1024))} MB.</small>
+        </label>
+        <div class="field-group">
+          <span>Attachment Preview</span>
+          ${renderChatImagePreview(form)}
+        </div>
+        <div class="button-row admin-form-actions">
+          <button class="hero-button" type="submit"${isBusy ? ' disabled' : ''}>${escapeHtml(isBusy ? 'Sending...' : `Send to ${activeChannel.label}`)}</button>
+          <button class="hero-button hero-button--secondary" type="button" data-action="chat-reset-form"${isBusy ? ' disabled' : ''}>Clear Draft</button>
+        </div>
+      </form>
+    </article>
+  `;
+}
+
+function renderChatImagePreview(form) {
+  const previewUrl = cleanText(form.imagePreviewUrl);
+  const imageName = cleanText(form.imageName);
+
+  if (!previewUrl) {
+    return `
+      <div class="chat-image-preview">
+        <div class="giveaway-card__placeholder">
+          <strong>No image selected</strong>
+          <span>Upload a screenshot, item shot, or model image if you want the room to include artwork.</span>
+        </div>
+      </div>
+    `;
+  }
+
+  return `
+    <div class="chat-image-preview">
+      <img class="chat-image-preview__image" src="${escapeHtml(previewUrl)}" alt="${escapeHtml(imageName || 'Chat upload preview')}" loading="lazy">
+      <span class="muted">${escapeHtml(imageName || 'Selected chat image')}</span>
+    </div>
+  `;
+}
+
+function renderChatMessageCard(message) {
+  const deleteLabel = canModerateChatMessages() && !isChatMessageOwner(message) ? 'Moderate' : 'Delete';
+
+  return `
+    <article class="chat-message${message.imageUrl ? ' chat-message--with-image' : ''}">
+      <div class="chat-message__meta">
+        <div>
+          <strong>${escapeHtml(message.senderName)}</strong>
+          <span class="directory-helper">${escapeHtml(message.senderInGameName ? `YoWorld: ${message.senderInGameName}` : 'Member account linked')}</span>
+        </div>
+        <div class="chat-message__meta-actions">
+          <span class="tag ${message.senderRoleTagClass}">${escapeHtml(message.senderRoleLabel)}</span>
+          <span class="muted">${escapeHtml(message.createdLabel)}</span>
+          ${canDeleteChatMessage(message)
+            ? `<button class="tracker-button" type="button" data-action="chat-delete-message" data-message-id="${escapeHtml(message.id)}">${escapeHtml(deleteLabel)}</button>`
+            : ''}
+        </div>
+      </div>
+      ${message.messageText ? `<div class="chat-message__text">${formatChatMessageText(message.messageText)}</div>` : ''}
+      ${message.imageUrl
+        ? `
+            <a class="chat-message__image-link" href="${escapeHtml(message.imageUrl)}" target="_blank" rel="noreferrer">
+              <img class="chat-message__image" src="${escapeHtml(message.imageUrl)}" alt="${escapeHtml(message.imageName || `${message.senderName} upload`)}" loading="lazy">
+            </a>
+          `
+        : ''}
+    </article>
   `;
 }
 
@@ -2985,6 +3263,10 @@ function getLinkedGiveawayMember() {
   return getLinkedWishlistMember();
 }
 
+function getLinkedChatMember() {
+  return getLinkedWishlistMember();
+}
+
 function getGiveawayEditorMembers() {
   const linkedMember = getLinkedGiveawayMember();
   return canManageGiveawayPosts() ? getMembers() : (linkedMember ? [linkedMember] : []);
@@ -2992,6 +3274,40 @@ function getGiveawayEditorMembers() {
 
 function hasLinkedGiveawayAccess() {
   return Boolean(getLinkedGiveawayMember());
+}
+
+function hasLinkedChatAccess() {
+  return Boolean(getLinkedChatMember());
+}
+
+function canPostChatMessages() {
+  return hasLinkedChatAccess();
+}
+
+function isChatMessageOwner(message) {
+  if (!message) {
+    return false;
+  }
+
+  const linkedMember = getLinkedChatMember();
+  const sessionUserId = getSessionUserId();
+  const sessionEmail = cleanText(state.admin.session?.user?.email).toLowerCase();
+
+  if (!linkedMember || (!sessionUserId && !sessionEmail)) {
+    return false;
+  }
+
+  return (
+    cleanText(message.senderMemberId) === cleanText(linkedMember.id)
+    && (
+      (sessionUserId && cleanText(message.createdByUserId) === sessionUserId)
+      || (sessionEmail && cleanText(message.createdByEmail).toLowerCase() === sessionEmail)
+    )
+  );
+}
+
+function canDeleteChatMessage(message) {
+  return canModerateChatMessages() || isChatMessageOwner(message);
 }
 
 function getWishlistEditorState() {
@@ -3099,6 +3415,18 @@ function getGiveaways() {
   return [...state.giveaways].sort(compareGiveaways);
 }
 
+function getActiveChatChannel() {
+  return getChatChannelDefinition(state.activeChatChannel);
+}
+
+function getChatMessages(channelKey = state.activeChatChannel) {
+  const normalizedChannel = normalizeChatChannelKey(channelKey);
+
+  return state.chatMessages
+    .filter((message) => message.channelKey === normalizedChannel)
+    .sort(compareChatMessages);
+}
+
 function getGiveawayEntryForMember(giveaway, memberId) {
   const normalizedMemberId = cleanText(memberId);
 
@@ -3129,6 +3457,32 @@ function renderGiveawaySourceNotice() {
   return `
     <article class="panel panel--announcement panel--span-full">
       <p class="eyebrow">Giveaways Status</p>
+      <h3>${escapeHtml(title)}</h3>
+      <p class="panel-lead">${escapeHtml(message)}</p>
+    </article>
+  `;
+}
+
+function renderChatSourceNotice() {
+  if (state.chatSource === 'live') {
+    return '';
+  }
+
+  let title = 'Using demo chat data';
+  let message = state.chatSourceMessage || getSupabaseStatus();
+
+  if (state.chatSource === 'loading') {
+    title = 'Loading live chat';
+    message = 'The app found your Supabase config and is trying to load the live chat rooms now.';
+  } else if (state.chatSource === 'restricted') {
+    title = 'Chat is still private';
+  } else if (state.chatSource === 'error') {
+    title = 'Live chat is unavailable';
+  }
+
+  return `
+    <article class="panel panel--announcement panel--span-full">
+      <p class="eyebrow">Chat Status</p>
       <h3>${escapeHtml(title)}</h3>
       <p class="panel-lead">${escapeHtml(message)}</p>
     </article>
@@ -3410,6 +3764,7 @@ function createDefaultAdminState() {
     generatedInvite: null,
     passwordResetForm: createPasswordResetForm(),
     wishlistForm: createEmptyWishlistForm(),
+    chatForm: createEmptyChatForm(CHAT_CHANNELS[0].key),
     giveawayForm: createEmptyGiveawayForm(),
     editingMemberId: '',
     form: createEmptyMemberForm(),
@@ -3459,6 +3814,18 @@ function createMemberInviteForm(memberId = '') {
 function createInviteClaimForm() {
   return {
     code: '',
+  };
+}
+
+function createEmptyChatForm(channelKey = CHAT_CHANNELS[0].key) {
+  return {
+    channelKey: normalizeChatChannelKey(channelKey),
+    messageText: '',
+    imageFile: null,
+    imagePreviewUrl: '',
+    imageName: '',
+    imagePath: '',
+    imageMimeType: '',
   };
 }
 
@@ -3930,6 +4297,12 @@ function resetGiveawayEditor() {
   setAdminNotice('Giveaway form reset.', 'muted');
 }
 
+function resetChatComposer() {
+  revokeChatPreviewUrl(state.admin.chatForm.imagePreviewUrl);
+  state.admin.chatForm = createEmptyChatForm(state.activeChatChannel);
+  setAdminNotice('Chat draft cleared.', 'muted');
+}
+
 function syncAdminDraftField(target) {
   if (!(target instanceof Element) || !target.name) {
     return;
@@ -3952,6 +4325,11 @@ function syncAdminDraftField(target) {
 
   if (target.closest('[data-wishlist-form]')) {
     syncWishlistDraftField(target);
+    return;
+  }
+
+  if (target.closest('[data-chat-form]')) {
+    syncChatDraftField(target);
     return;
   }
 
@@ -4075,6 +4453,20 @@ function syncGiveawayDraftField(target) {
   refreshGiveawayComposerPreview();
 }
 
+function syncChatDraftField(target) {
+  if (!(target instanceof Element) || !target.name) {
+    return;
+  }
+
+  if (target.name === 'chat_image_file') {
+    handleChatImageSelection(target);
+    render();
+    return;
+  }
+
+  syncAdminDraftState('chatForm', ADMIN_CHAT_FIELD_MAP, target);
+}
+
 function refreshGiveawayComposerPreview() {
   const previewRoot = app.querySelector('[data-giveaway-preview]');
 
@@ -4168,6 +4560,49 @@ function handleGiveawayImageSelection(target) {
   refreshGiveawayComposerPreview();
 }
 
+function handleChatImageSelection(target) {
+  const file = target instanceof HTMLInputElement && target.files ? target.files[0] : null;
+
+  revokeChatPreviewUrl(state.admin.chatForm.imagePreviewUrl);
+
+  if (!file) {
+    state.admin.chatForm = {
+      ...state.admin.chatForm,
+      imageFile: null,
+      imagePreviewUrl: '',
+      imageName: '',
+      imagePath: '',
+      imageMimeType: '',
+    };
+    return;
+  }
+
+  try {
+    validateChatImageFile(file);
+  } catch (error) {
+    state.admin.chatForm = {
+      ...state.admin.chatForm,
+      imageFile: null,
+      imagePreviewUrl: '',
+      imageName: '',
+      imagePath: '',
+      imageMimeType: '',
+    };
+    setAdminNotice(error instanceof Error ? error.message : 'Choose a supported chat image first.', 'error');
+    return;
+  }
+
+  state.admin.chatForm = {
+    ...state.admin.chatForm,
+    imageFile: file,
+    imagePreviewUrl: URL.createObjectURL(file),
+    imageName: file.name || 'chat-image',
+    imagePath: '',
+    imageMimeType: file.type || '',
+  };
+  setAdminNotice(`${file.name || 'Image'} is ready to send in chat.`, 'success');
+}
+
 function validateWishlistImageFile(file) {
   if (!file) {
     throw new Error('Choose a PNG or JPEG wish list image before saving.');
@@ -4196,6 +4631,20 @@ function validateGiveawayImageFile(file) {
   }
 }
 
+function validateChatImageFile(file) {
+  if (!file) {
+    throw new Error('Choose an image before sending it to chat.');
+  }
+
+  if (!CHAT_IMAGE_TYPES.has(file.type)) {
+    throw new Error('Chat uploads must be PNG, JPEG, or WebP images.');
+  }
+
+  if (file.size > CHAT_IMAGE_MAX_BYTES) {
+    throw new Error(`Chat images must be ${Math.round(CHAT_IMAGE_MAX_BYTES / (1024 * 1024))} MB or smaller.`);
+  }
+}
+
 function revokeWishlistPreviewUrl(url) {
   if (!url || !String(url).startsWith('blob:')) {
     return;
@@ -4209,6 +4658,18 @@ function revokeWishlistPreviewUrl(url) {
 }
 
 function revokeGiveawayPreviewUrl(url) {
+  if (!url || !String(url).startsWith('blob:')) {
+    return;
+  }
+
+  try {
+    URL.revokeObjectURL(url);
+  } catch {
+    // Ignore stale object URLs.
+  }
+}
+
+function revokeChatPreviewUrl(url) {
   if (!url || !String(url).startsWith('blob:')) {
     return;
   }
@@ -4540,6 +5001,110 @@ async function handleGiveawaySubmit(event) {
     setAdminNotice(wasEditing ? `${savedTitle} was updated.` : `${savedTitle} is now live on the giveaway board.`, 'success');
   } catch (error) {
     setAdminNotice(error instanceof Error ? error.message : 'Could not post that giveaway.', 'error');
+  } finally {
+    state.admin.isBusy = false;
+    render();
+  }
+}
+
+async function handleChatSubmit(event) {
+  if (!state.admin.session) {
+    setAdminNotice('Sign in first to post in chat.', 'error');
+    render();
+    return;
+  }
+
+  const linkedMember = getLinkedChatMember();
+
+  if (!linkedMember) {
+    setAdminNotice('Claim your member invite before posting in chat.', 'error');
+    render();
+    return;
+  }
+
+  const formData = new FormData(event.target);
+  const selectedImageFile = state.admin.chatForm.imageFile;
+
+  state.admin.isBusy = true;
+  setAdminNotice(selectedImageFile ? 'Uploading chat image...' : 'Sending chat message...', 'muted');
+  render();
+
+  try {
+    const channelKey = normalizeChatChannelKey(formData.get('channel_key'));
+    const imageUpload = selectedImageFile
+      ? await uploadChatImageFile(selectedImageFile, linkedMember, channelKey)
+      : null;
+    const payload = buildChatMessagePayload(formData, linkedMember, imageUpload);
+    const response = await supabaseFetch('chat_messages', {
+      method: 'POST',
+      useSession: true,
+      headers: {
+        Prefer: 'return=representation',
+      },
+      body: payload,
+    });
+
+    if (!response.ok) {
+      throw new Error(await getSupabaseErrorMessage(response, 'chat-write'));
+    }
+
+    revokeChatPreviewUrl(state.admin.chatForm.imagePreviewUrl);
+    state.admin.chatForm = createEmptyChatForm(channelKey);
+    await loadLiveChatMessages();
+    setAdminNotice(`Your message was sent to ${getChatChannelDefinition(channelKey).label}.`, 'success');
+  } catch (error) {
+    setAdminNotice(error instanceof Error ? error.message : 'Could not send that chat message.', 'error');
+  } finally {
+    state.admin.isBusy = false;
+    render();
+  }
+}
+
+async function deleteChatMessage(messageId) {
+  const message = state.chatMessages.find((entry) => entry.id === cleanText(messageId));
+
+  if (!message) {
+    setAdminNotice('That chat message could not be found.', 'error');
+    render();
+    return;
+  }
+
+  if (!canDeleteChatMessage(message)) {
+    setAdminNotice('Only the message sender or an admin can remove this chat message.', 'error');
+    render();
+    return;
+  }
+
+  if (!window.confirm(`Remove this message from ${getChatChannelDefinition(message.channelKey).label}?`)) {
+    return;
+  }
+
+  state.admin.isBusy = true;
+  setAdminNotice('Removing chat message...', 'muted');
+  render();
+
+  try {
+    const response = await supabaseFetch('chat_messages', {
+      method: 'DELETE',
+      query: new URLSearchParams({ id: `eq.${message.id}` }).toString(),
+      useSession: true,
+    });
+
+    if (!response.ok) {
+      throw new Error(await getSupabaseErrorMessage(response, 'chat-delete'));
+    }
+
+    if (message.imagePath && typeof storageFetch === 'function') {
+      await storageFetch(CHAT_IMAGE_BUCKET, message.imagePath, {
+        method: 'DELETE',
+        useSession: true,
+      }).catch(() => null);
+    }
+
+    await loadLiveChatMessages();
+    setAdminNotice('Chat message removed.', 'success');
+  } catch (error) {
+    setAdminNotice(error instanceof Error ? error.message : 'Could not remove that chat message.', 'error');
   } finally {
     state.admin.isBusy = false;
     render();
@@ -5236,6 +5801,26 @@ async function uploadGiveawayImageFile(file, member, endsAtIso) {
   };
 }
 
+async function uploadChatImageFile(file, member, channelKey) {
+  validateChatImageFile(file);
+
+  if (typeof uploadStorageObject !== 'function') {
+    throw new Error('Storage uploads are not available. Reload the app and try again.');
+  }
+
+  const objectPath = buildChatImageStoragePath(member.id, channelKey, file);
+  const upload = await uploadStorageObject(CHAT_IMAGE_BUCKET, objectPath, file, {
+    cacheControl: '3600',
+  });
+
+  return {
+    path: upload.path,
+    publicUrl: upload.publicUrl,
+    mimeType: file.type,
+    name: file.name || 'chat-image',
+  };
+}
+
 function buildWishlistImageStoragePath(memberId, weekStartDate, file) {
   const extension = file.type === 'image/png' ? 'png' : 'jpg';
   const cleanBaseName = cleanText(file.name)
@@ -5259,6 +5844,18 @@ function buildGiveawayImageStoragePath(memberId, endsAtIso, file) {
   const endsSegment = cleanText(endsAtIso).replace(/[^0-9]/g, '').slice(0, 12) || 'open';
 
   return `${cleanText(memberId)}/${endsSegment}/${timestamp}-${cleanBaseName}.${extension}`;
+}
+
+function buildChatImageStoragePath(memberId, channelKey, file) {
+  const extension = file.type === 'image/png' ? 'png' : file.type === 'image/webp' ? 'webp' : 'jpg';
+  const cleanBaseName = cleanText(file.name)
+    .replace(/\.[^.]+$/, '')
+    .replace(/[^a-z0-9]+/gi, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 44) || 'chat';
+  const timestamp = new Date().toISOString().replace(/[^0-9]/g, '').slice(0, 14);
+
+  return `${cleanText(memberId)}/${normalizeChatChannelKey(channelKey)}/${timestamp}-${cleanBaseName}.${extension}`;
 }
 
 function buildWishlistPostPayload(formData, member, imageUpload = null, currentWishlist = null) {
@@ -5329,6 +5926,31 @@ function buildGiveawayPayload(formData, member) {
     item_text: itemText,
     ends_at: endsAtIso,
     is_active: true,
+  };
+}
+
+function buildChatMessagePayload(formData, member, imageUpload = null) {
+  const channelKey = normalizeChatChannelKey(formData.get('channel_key'));
+  const messageText = cleanText(formData.get('message_text'));
+
+  if (messageText.length > CHAT_MESSAGE_MAX_LENGTH) {
+    throw new Error(`Chat messages must be ${CHAT_MESSAGE_MAX_LENGTH} characters or fewer.`);
+  }
+
+  if (!messageText && !imageUpload?.publicUrl) {
+    throw new Error('Add a message, an image, or both before sending chat.');
+  }
+
+  return {
+    channel_key: channelKey,
+    sender_member_id: member.id,
+    sender_name_snapshot: member.facebookName || member.displayName,
+    sender_in_game_name_snapshot: member.inGameName || '',
+    message_text: normalizeNullableText(messageText),
+    image_url: normalizeNullableText(imageUpload?.publicUrl),
+    image_path: normalizeNullableText(imageUpload?.path),
+    image_mime_type: normalizeNullableText(imageUpload?.mimeType),
+    image_name: normalizeNullableText(imageUpload?.name),
   };
 }
 
@@ -5634,6 +6256,58 @@ async function loadLiveGiveaways() {
   render();
 }
 
+async function loadLiveChatMessages() {
+  if (!hasSupabaseConfig) {
+    return;
+  }
+
+  try {
+    const chatQuery = new URLSearchParams({
+      select:
+        'id,channel_key,sender_member_id,sender_name_snapshot,sender_in_game_name_snapshot,message_text,image_url,image_path,image_mime_type,image_name,created_by_user_id,created_by_email,created_at,updated_at',
+      order: 'created_at.asc',
+      limit: '240',
+    }).toString();
+    const response = await supabaseFetch('chat_messages', {
+      query: chatQuery,
+      method: 'GET',
+      useSession: true,
+    });
+
+    if (!response.ok) {
+      throw new Error(await getSupabaseErrorMessage(response, 'chat'));
+    }
+
+    const rows = await response.json();
+    const normalizedRows = Array.isArray(rows) ? rows : [];
+
+    state.chatMessages = normalizeSupabaseChatMessages(normalizedRows);
+    state.chatSource = 'live';
+    state.chatSourceMessage = `Loaded ${state.chatMessages.length} chat messages from Supabase.`;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Could not load live chat.';
+    state.chatMessages = hasSupabaseConfig ? [] : initialChatMessages;
+    state.chatSource = /private|policy|permission|forbidden|unauthorized|sign in/i.test(message) ? 'restricted' : 'error';
+    state.chatSourceMessage = message;
+  }
+
+  render();
+}
+
+function startChatAutoRefresh() {
+  if (!hasSupabaseConfig || typeof window === 'undefined') {
+    return;
+  }
+
+  window.setInterval(() => {
+    if (document.visibilityState === 'hidden' || state.activeSection !== 'chat' || state.chatSource !== 'live') {
+      return;
+    }
+
+    void loadLiveChatMessages();
+  }, CHAT_AUTO_REFRESH_MS);
+}
+
 async function getSupabaseErrorMessage(response, context = 'read') {
   if (response.status === 401 || response.status === 403) {
     if (context === 'write') {
@@ -5656,6 +6330,14 @@ async function getSupabaseErrorMessage(response, context = 'read') {
       return 'This signed-in account does not have permission to pick a giveaway winner yet.';
     }
 
+    if (context === 'chat-write') {
+      return 'This signed-in account does not have permission to post chat messages yet.';
+    }
+
+    if (context === 'chat-delete') {
+      return 'This signed-in account does not have permission to moderate chat messages yet.';
+    }
+
     if (context === 'staff') {
       return 'Could not read staff permissions. Run supabase/07_admin_editor_auth_policies.sql after 05_member_roles_and_permissions.sql.';
     }
@@ -5670,6 +6352,10 @@ async function getSupabaseErrorMessage(response, context = 'read') {
 
     if (context === 'giveaways' || context === 'giveaway-entries') {
       return 'The giveaway board is still private. Push supabase/migrations/20260513000100_giveaways.sql first.';
+    }
+
+    if (context === 'chat') {
+      return 'Sign in with a linked member account to load live chat. If you already did that, push supabase/migrations/20260513000400_chat_module.sql first.';
     }
 
     if (context === 'wishlist-write') {
@@ -5708,6 +6394,10 @@ async function getSupabaseErrorMessage(response, context = 'read') {
       return 'The giveaway tables are not available yet. Push supabase/migrations/20260513000100_giveaways.sql first.';
     }
 
+    if (context === 'chat' || context === 'chat-write' || context === 'chat-delete') {
+      return 'The chat schema is not available yet. Push supabase/migrations/20260513000400_chat_module.sql first.';
+    }
+
     if (context === 'giveaway-winner') {
       return 'The giveaway winner picker is not available yet. Push supabase/migrations/20260513000100_giveaways.sql first.';
     }
@@ -5743,8 +6433,39 @@ function normalizeMockWishlists(sourceWishlists, memberDirectory = []) {
   return sourceWishlists.map((wishlist, index) => normalizeMockWishlist(wishlist, index, memberDirectory));
 }
 
+function normalizeMockChatMessages(sourceChatMessages, memberDirectory = []) {
+  return sourceChatMessages.map((message, index) => normalizeMockChatMessage(message, index, memberDirectory));
+}
+
 function normalizeMockGiveaways(sourceGiveaways, memberDirectory = []) {
   return sourceGiveaways.map((giveaway, index) => normalizeMockGiveaway(giveaway, index, memberDirectory));
+}
+
+function normalizeMockChatMessage(message, index, memberDirectory = []) {
+  const messageId = cleanText(message.id) || `chat-message-${index + 1}`;
+  const senderName = cleanText(message.senderName || message.member || `Member ${index + 1}`);
+  const matchedMember = findMemberByName(senderName, memberDirectory);
+
+  return buildChatMessageModel(
+    {
+      id: messageId,
+      channelKey: cleanText(message.channelKey || message.channel),
+      senderMemberId: cleanText(message.senderMemberId || matchedMember?.id),
+      senderName,
+      senderInGameName: cleanText(message.senderInGameName || matchedMember?.inGameName),
+      senderRole: cleanText(message.senderRole || matchedMember?.groupRole),
+      messageText: cleanText(message.messageText || message.message),
+      imageUrl: buildAssetUrl(message.imagePath || message.imageUrl),
+      imagePath: cleanText(message.imagePath),
+      imageMimeType: cleanText(message.imageMimeType),
+      imageName: cleanText(message.imageName),
+      createdAt: cleanText(message.createdAt) || new Date(Date.now() - (index + 1) * 35 * 60 * 1000).toISOString(),
+      updatedAt: cleanText(message.updatedAt),
+      createdByUserId: '',
+      createdByEmail: '',
+    },
+    index,
+  );
 }
 
 function normalizeMockWishlist(wishlist, index, memberDirectory = []) {
@@ -5974,6 +6695,35 @@ function normalizeSupabaseGiveaways(rows, entryRows = []) {
     index,
     entriesByGiveawayId.get(cleanText(row.id)) || [],
   ));
+}
+
+function normalizeSupabaseChatMessages(rows) {
+  return rows.map((row, index) => normalizeSupabaseChatMessage(row, index));
+}
+
+function normalizeSupabaseChatMessage(row, index) {
+  const fallbackMember = findMemberById(row.sender_member_id);
+
+  return buildChatMessageModel(
+    {
+      id: cleanText(row.id) || `chat-live-${index + 1}`,
+      channelKey: cleanText(row.channel_key),
+      senderMemberId: cleanText(row.sender_member_id) || cleanText(fallbackMember?.id),
+      senderName: cleanText(row.sender_name_snapshot || fallbackMember?.facebookName || fallbackMember?.displayName || `Member ${index + 1}`),
+      senderInGameName: cleanText(row.sender_in_game_name_snapshot || fallbackMember?.inGameName),
+      senderRole: cleanText(fallbackMember?.groupRole),
+      messageText: cleanText(row.message_text),
+      imageUrl: cleanText(row.image_url),
+      imagePath: cleanText(row.image_path),
+      imageMimeType: cleanText(row.image_mime_type),
+      imageName: cleanText(row.image_name),
+      createdAt: cleanText(row.created_at),
+      updatedAt: cleanText(row.updated_at),
+      createdByUserId: cleanText(row.created_by_user_id),
+      createdByEmail: cleanText(row.created_by_email).toLowerCase(),
+    },
+    index,
+  );
 }
 
 function normalizeSupabaseWishlist(row, index, itemRows, commentRows = []) {
@@ -6401,6 +7151,17 @@ function compareGiveaways(left, right) {
   return left.title.localeCompare(right.title) || left.sortOrder - right.sortOrder;
 }
 
+function compareChatMessages(left, right) {
+  const leftCreatedAt = cleanText(left.createdAt) || '0000-00-00T00:00:00.000Z';
+  const rightCreatedAt = cleanText(right.createdAt) || '0000-00-00T00:00:00.000Z';
+
+  if (leftCreatedAt !== rightCreatedAt) {
+    return leftCreatedAt.localeCompare(rightCreatedAt);
+  }
+
+  return left.sortOrder - right.sortOrder;
+}
+
 function normalizeWishlistItems(items, parentId = '') {
   return Array.isArray(items)
     ? items
@@ -6570,6 +7331,33 @@ function buildGiveawayModel(values, index) {
     entryCount: entries.length,
     createdAt: cleanText(values.createdAt),
     updatedAt: cleanText(values.updatedAt),
+    createdByUserId: cleanText(values.createdByUserId),
+    createdByEmail: cleanText(values.createdByEmail).toLowerCase(),
+    sortOrder: index,
+  };
+}
+
+function buildChatMessageModel(values, index) {
+  const senderRole = normalizeGroupRole(values.senderRole);
+
+  return {
+    id: cleanText(values.id) || `chat-message-${index + 1}`,
+    channelKey: normalizeChatChannelKey(values.channelKey),
+    channelLabel: getChatChannelDefinition(values.channelKey).label,
+    senderMemberId: cleanText(values.senderMemberId),
+    senderName: cleanText(values.senderName) || `Member ${index + 1}`,
+    senderInGameName: cleanText(values.senderInGameName),
+    senderRole,
+    senderRoleLabel: formatGroupRoleLabel(senderRole),
+    senderRoleTagClass: getRoleTagClass(senderRole),
+    messageText: cleanText(values.messageText),
+    imageUrl: buildAssetUrl(values.imageUrl),
+    imagePath: cleanText(values.imagePath),
+    imageMimeType: cleanText(values.imageMimeType),
+    imageName: cleanText(values.imageName),
+    createdAt: cleanText(values.createdAt),
+    updatedAt: cleanText(values.updatedAt),
+    createdLabel: formatChatMessageCreatedLabel(values.createdAt),
     createdByUserId: cleanText(values.createdByUserId),
     createdByEmail: cleanText(values.createdByEmail).toLowerCase(),
     sortOrder: index,
@@ -6799,6 +7587,31 @@ function formatGiveawayEntryCreatedLabel(value) {
   })}`;
 }
 
+function formatChatMessageCreatedLabel(value) {
+  const normalizedValue = cleanText(value);
+
+  if (!normalizedValue) {
+    return 'Just now';
+  }
+
+  const parsedDate = new Date(normalizedValue);
+
+  if (Number.isNaN(parsedDate.getTime())) {
+    return 'Just now';
+  }
+
+  return parsedDate.toLocaleString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+}
+
+function formatChatMessageText(value) {
+  return escapeHtml(cleanText(value)).replace(/\n/g, '<br>');
+}
+
 function isGiveawayOpen({ isActive, endsAt, winnerSelectedAt }) {
   if (!isActive || cleanText(winnerSelectedAt)) {
     return false;
@@ -6842,6 +7655,16 @@ function formatGiveawayGiverLine(giveaway) {
   return giveaway.giverInGameName
     ? `${giveaway.giverName} • YoWorld: ${giveaway.giverInGameName}`
     : giveaway.giverName;
+}
+
+function normalizeChatChannelKey(value) {
+  const normalizedValue = cleanText(value).toLowerCase();
+  return CHAT_CHANNELS.some((channel) => channel.key === normalizedValue) ? normalizedValue : CHAT_CHANNELS[0].key;
+}
+
+function getChatChannelDefinition(value) {
+  const normalizedValue = normalizeChatChannelKey(value);
+  return CHAT_CHANNELS.find((channel) => channel.key === normalizedValue) || CHAT_CHANNELS[0];
 }
 
 function buildGiveawayEntrantExportText(giveaway) {

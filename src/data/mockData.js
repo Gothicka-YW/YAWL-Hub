@@ -5,6 +5,7 @@ window.YAWL_DATA = {
     { id: 'members', label: 'Members' },
     { id: 'birthdays', label: 'Birthdays' },
     { id: 'giveaways', label: 'Giveaways' },
+    { id: 'chat', label: 'Chat' },
     { id: 'hangouts', label: 'Events' },
     { id: 'notes', label: 'My Notes' },
     { id: 'account', label: 'Account' },
@@ -155,6 +156,30 @@ window.YAWL_DATA = {
       donor: 'Sol Harbor',
       claimedBy: '',
       note: 'Perfect for storybook themes.',
+    },
+  ],
+
+  chatMessages: [
+    {
+      id: 'chat-general-1',
+      channelKey: 'general',
+      senderName: 'Ember Bloom',
+      messageText: 'Morning porch run is done. If anyone needs me to check a home link later, ping me here.',
+      createdAt: '2026-05-13T12:10:00.000Z',
+    },
+    {
+      id: 'chat-giveaways-1',
+      channelKey: 'giveaways',
+      senderName: 'Nova June',
+      messageText: 'I am closing the patio bundle tonight. Last call before I pick the winner.',
+      createdAt: '2026-05-13T13:45:00.000Z',
+    },
+    {
+      id: 'chat-models-1',
+      channelKey: 'models',
+      senderName: 'Lark Wisp',
+      messageText: 'Posting a cottage-core look later. Soft florals and gold shoes are finally matching the room set.',
+      createdAt: '2026-05-13T14:20:00.000Z',
     },
   ],
 
