@@ -36,11 +36,6 @@ const DEFAULT_DASHBOARD_ANNOUNCEMENT = cleanText(String(dashboard.announcement |
 const DASHBOARD_ANNOUNCEMENT_MAX_LENGTH = 500;
 
 const STORAGE_KEY = 'yawl-hub-private-tracker';
-const MEMBER_ICON_BUCKET = 'member-icons';
-const MEMBER_ICON_TARGET_SIZE = 256;
-const MEMBER_ICON_MAX_BYTES = 1024 * 1024;
-const MEMBER_ICON_SOURCE_MAX_BYTES = 10 * 1024 * 1024;
-const MEMBER_ICON_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp']);
 const YOMODELS_IMAGE_BUCKET = 'yomodels-images';
 const YOMODELS_IMAGE_MAX_BYTES = 8 * 1024 * 1024;
 const YOMODELS_IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp']);
@@ -309,13 +304,6 @@ app.addEventListener('click', async (event) => {
       resetAdminEditor();
       render();
       return;
-    case 'member-icon-clear-selection':
-      resetMemberIconSelection();
-      render();
-      return;
-    case 'member-icon-remove':
-      await handleMemberIconRemove();
-      return;
     case 'admin-edit-event':
       beginEditingEvent(eventId);
       render();
@@ -460,11 +448,6 @@ app.addEventListener('change', (event) => {
     return;
   }
 
-  if (event.target.matches('[data-member-icon-input]')) {
-    void handleMemberIconSelection(event.target);
-    return;
-  }
-
   syncAdminDraftField(event.target);
 });
 
@@ -539,11 +522,6 @@ app.addEventListener('submit', async (event) => {
     event.preventDefault();
     await handlePasswordResetSubmit(event);
     return;
-  }
-
-  if (event.target.matches('[data-member-icon-form]')) {
-    event.preventDefault();
-    await handleMemberIconSubmit(event);
   }
 });
 
@@ -906,12 +884,7 @@ function renderDashboard() {
                 .map(
                   (member) => `
                     <div class="dashboard-upcoming-item">
-                      <div class="member-identity member-identity--sm">
-                        ${renderMemberAvatar({ memberId: member.id, name: member.displayName, size: 'sm' })}
-                        <div class="member-identity__copy">
-                          <strong class="member-identity__name">${escapeHtml(member.displayName)}</strong>
-                        </div>
-                      </div>
+                      <strong>${escapeHtml(member.displayName)}</strong>
                       <span>${escapeHtml(member.birthdayLabel)}</span>
                     </div>
                   `,
@@ -926,39 +899,6 @@ function renderDashboard() {
       </article>
     </section>
   `;
-}
-
-function getMemberAvatarData(memberId = '', fallbackName = '', fallbackUrl = '') {
-  const matchedMember = cleanText(memberId) ? findMemberById(memberId) : null;
-  const displayName = cleanText(matchedMember?.facebookName || matchedMember?.displayName || fallbackName || 'Member');
-  const iconUrl = sanitizeUrl(cleanText(matchedMember?.iconUrl || fallbackUrl));
-  const nameParts = displayName.split(/[^A-Za-z0-9]+/).filter(Boolean);
-  const initials = (nameParts.length ? nameParts.slice(0, 2).map((part) => part[0]).join('') : '?').toUpperCase();
-
-  return {
-    displayName,
-    iconUrl,
-    initials,
-  };
-}
-
-function renderMemberAvatar({ memberId = '', name = '', imageUrl = '', size = 'md', className = '' } = {}) {
-  const avatar = getMemberAvatarData(memberId, name, imageUrl);
-  const classNames = ['member-avatar', `member-avatar--${size}`];
-
-  if (className) {
-    classNames.push(className);
-  }
-
-  if (avatar.iconUrl) {
-    return `
-      <span class="${classNames.join(' ')}" aria-hidden="true">
-        <img class="member-avatar__image" src="${escapeHtml(avatar.iconUrl)}" alt="" loading="lazy">
-      </span>
-    `;
-  }
-
-  return `<span class="${classNames.join(' ')}" aria-hidden="true">${escapeHtml(avatar.initials)}</span>`;
 }
 
 function renderWishlists() {
@@ -1015,50 +955,35 @@ function renderWishlistCard(wishlist) {
         ${renderWishlistBoardMedia(wishlist, 'wishlist-card__image')}
       </div>
       <div class="wishlist-card__body">
-        <div class="wishlist-card__header">
-          <div class="wishlist-card__identity">
+        <div class="panel__heading">
+          <div>
             <p class="eyebrow">${escapeHtml(wishlist.weekLabel)}</p>
-            <div class="member-identity member-identity--md">
-              ${renderMemberAvatar({ memberId: wishlist.memberId, name: wishlist.memberName, size: 'md' })}
-              <div class="member-identity__copy">
-                <h3>${escapeHtml(wishlist.memberName)}</h3>
-                ${wishlist.inGameName ? `<span class="directory-helper">${escapeHtml(`YoWorld: ${wishlist.inGameName}`)}</span>` : ''}
-              </div>
-            </div>
+            <h3>${escapeHtml(wishlist.memberName)}</h3>
           </div>
-          <div class="wishlist-card__meta">
-            <span class="tag wishlist-card__updated">${escapeHtml(wishlist.lastUpdatedLabel)}</span>
-          </div>
+          <span class="tag">${escapeHtml(wishlist.lastUpdatedLabel)}</span>
         </div>
-        <p class="panel-lead wishlist-card__summary">${escapeHtml(wishlist.summary)}</p>
-        <div class="wishlist-counts wishlist-counts--board wishlist-card__stats">
+        <p class="panel-lead">${escapeHtml(wishlist.summary)}</p>
+        <div class="wishlist-counts wishlist-counts--board">
           ${renderWishlistCountTag(`${wishlist.commentCount} comments`, '')}
           ${renderWishlistCountTag(`${wishlist.giftedCommentCount} gifted notes`, wishlist.giftedCommentCount > 0 ? 'wishlist-count--success' : '')}
           ${canEditThisPost ? renderWishlistCountTag('You can update this post', 'wishlist-count--success') : ''}
         </div>
-        <div class="wishlist-card__details">
-          <div class="wishlist-card__detail">
-            <span class="wishlist-card__detail-label">Status</span>
-            <p>${escapeHtml(wishlist.statusNote)}</p>
+        <div class="stack-list">
+          <div class="list-row list-row--compact">
+            <strong>Status</strong>
+            <span>${escapeHtml(wishlist.statusNote)}</span>
           </div>
           ${wishlist.thankYouSummary
             ? `
-                <div class="wishlist-card__detail wishlist-card__detail--success">
-                  <span class="wishlist-card__detail-label">Thanks</span>
-                  <p>${escapeHtml(wishlist.thankYouSummary)}</p>
+                <div class="list-row list-row--compact">
+                  <strong>Thanks</strong>
+                  <span>${escapeHtml(wishlist.thankYouSummary)}</span>
                 </div>
               `
             : ''}
         </div>
-        ${wishlist.thankYouNote
-          ? `
-              <div class="wishlist-note wishlist-note--featured">
-                <strong>Thank-you note</strong>
-                <span>${escapeHtml(wishlist.thankYouNote)}</span>
-              </div>
-            `
-          : ''}
-        <div class="button-row wishlist-card__actions">
+        ${wishlist.thankYouNote ? `<p class="wishlist-note"><strong>Thank-you note:</strong> ${escapeHtml(wishlist.thankYouNote)}</p>` : ''}
+        <div class="button-row">
           ${wishlist.homeLink ? `<a class="hero-button hero-button--secondary" href="${wishlist.homeLink}" target="_blank" rel="noreferrer">Open Home Link</a>` : ''}
           ${wishlist.imageUrl ? `<a class="hero-button hero-button--secondary" href="${wishlist.imageUrl}" target="_blank" rel="noreferrer">Open Board Image</a>` : ''}
           ${canEditThisPost ? `<button class="hero-button hero-button--secondary" type="button" data-action="wishlist-edit" data-member-id="${escapeHtml(wishlist.memberId)}">Edit This Board</button>` : ''}
@@ -1296,7 +1221,7 @@ function renderWishlistComments(wishlist) {
           <p class="eyebrow">Gift Comments</p>
           <h4>Let ${escapeHtml(wishlist.memberName)} know</h4>
         </div>
-        <span class="tag tag--muted">${escapeHtml(`${comments.length} total`)}</span>
+        <span class="tag">${escapeHtml(`${comments.length} total`)}</span>
       </div>
       <div class="wishlist-comments__list">
         ${comments.length
@@ -1319,7 +1244,7 @@ function renderWishlistComments(wishlist) {
             <textarea name="comment_text" class="admin-textarea wishlist-comment-textarea" placeholder="Optional note, item gifted, or porch update."></textarea>
           </label>
         </div>
-        <div class="button-row wishlist-comment-form__actions">
+        <div class="button-row">
           <button class="hero-button hero-button--secondary" type="submit">Post Gift Comment</button>
         </div>
       </form>
@@ -1328,23 +1253,14 @@ function renderWishlistComments(wishlist) {
 }
 
 function renderWishlistComment(comment) {
-  const matchedMember = findMemberByName(comment.commenterName);
-
   return `
-    <article class="wishlist-comment${comment.didGift ? ' wishlist-comment--gifted' : ''}">
+    <article class="wishlist-comment">
       <div class="wishlist-comment__meta">
-        <div class="member-identity member-identity--sm">
-          ${renderMemberAvatar({ memberId: cleanText(matchedMember?.id), name: comment.commenterName, size: 'sm' })}
-          <div class="member-identity__copy">
-            <strong class="member-identity__name">${escapeHtml(comment.commenterName)}</strong>
-          </div>
-        </div>
-        <div class="wishlist-comment__meta-right">
-          <span class="tag ${comment.didGift ? 'wishlist-count--success' : 'tag--muted'}">${escapeHtml(comment.didGift ? 'Gifted' : 'Comment')}</span>
-          <span class="wishlist-comment__timestamp">${escapeHtml(comment.createdLabel)}</span>
-        </div>
+        <strong>${escapeHtml(comment.commenterName)}</strong>
+        <span>${escapeHtml(comment.createdLabel)}</span>
       </div>
-      ${comment.commentText ? `<p class="wishlist-comment__text">${escapeHtml(comment.commentText)}</p>` : ''}
+      ${comment.didGift ? '<span class="tag wishlist-count--success">Gifted</span>' : ''}
+      ${comment.commentText ? `<p>${escapeHtml(comment.commentText)}</p>` : ''}
     </article>
   `;
 }
@@ -1745,13 +1661,8 @@ function renderMemberDirectoryRow(member) {
   return `
     <article class="directory-row" role="listitem">
       <div class="directory-cell directory-cell--name">
-        <div class="member-identity member-identity--md">
-          ${renderMemberAvatar({ memberId: member.id, name: member.facebookName || member.displayName, size: 'md' })}
-          <div class="member-identity__copy">
-            <strong class="member-identity__name">${escapeHtml(member.facebookName || member.displayName)}</strong>
-            ${member.metaText ? `<span class="directory-helper">${escapeHtml(member.metaText)}</span>` : ''}
-          </div>
-        </div>
+        <strong>${escapeHtml(member.facebookName || member.displayName)}</strong>
+        ${member.metaText ? `<span class="directory-helper">${escapeHtml(member.metaText)}</span>` : ''}
       </div>
       <div class="directory-cell">
         <span class="directory-primary">${escapeHtml(member.inGameName || 'Not added yet')}</span>
@@ -2871,7 +2782,6 @@ function renderAccount() {
       ${renderAdminSessionPanel()}
       ${state.admin.isRecoveryMode ? renderPasswordRecoveryPanel() : ''}
       ${!getLinkedWishlistMember() ? renderMemberInviteClaimPanel() : ''}
-      ${getLinkedWishlistMember() ? renderMemberIconPanel() : ''}
       ${renderAccountInfoPanel()}
       ${hasAdminToolsAccess() ? renderAdminLaunchPanel() : ''}
     </section>
@@ -3084,83 +2994,11 @@ function renderAccountInfoPanel() {
           <span>Create an account for private features, then claim your member invite to unlock self-service posting.</span>
         </div>
         <div class="list-row list-row--compact">
-          <strong>Square icon</strong>
-          <span>After your member profile is linked, you can upload one square icon that follows your name across chat, wish lists, giveaways, and the directory.</span>
-        </div>
-        <div class="list-row list-row--compact">
           <strong>Staff editing</strong>
           <span>Only emails in staff_permissions unlock the editor.</span>
         </div>
       </div>
     </article>
-  `;
-}
-
-function renderMemberIconPanel() {
-  const linkedMember = getLinkedWishlistMember();
-  const form = state.admin.memberIconForm;
-  const previewUrl = cleanText(form.previewUrl || linkedMember?.iconUrl);
-  const previewName = cleanText(form.name || linkedMember?.iconName || 'Current member icon');
-  const hasDraft = Boolean(form.file);
-  const hasCurrentIcon = Boolean(cleanText(linkedMember?.iconUrl));
-
-  if (!linkedMember) {
-    return '';
-  }
-
-  return `
-    <article class="panel panel--announcement">
-      <div class="panel__heading">
-        <div>
-          <p class="eyebrow">Member Icon</p>
-          <h3>Upload your square icon</h3>
-        </div>
-        <span class="tag">256 x 256 square</span>
-      </div>
-      <p class="panel-lead">This icon displays next to your member identity across chat, wish lists, giveaways, and the shared directory. Uploads are center-cropped and resized to a clean square automatically.</p>
-      <form class="admin-form" data-member-icon-form>
-        <div class="form-grid">
-          <label class="field-group field-group--wide">
-            <span>Icon Upload</span>
-            <input class="text-input" type="file" name="member_icon_file" accept="image/png,image/jpeg,image/webp" data-member-icon-input>
-            <small class="field-help">PNG, JPEG, or WebP. The app will crop the center and save a ${MEMBER_ICON_TARGET_SIZE} x ${MEMBER_ICON_TARGET_SIZE} px square under ${Math.round(MEMBER_ICON_MAX_BYTES / 1024)} KB.</small>
-          </label>
-          <div class="field-group field-group--wide">
-            <span>Preview</span>
-            ${renderMemberIconPreview(linkedMember, previewUrl, previewName)}
-          </div>
-        </div>
-        <div class="button-row admin-form-actions">
-          <button class="hero-button" type="submit"${state.admin.isBusy || !hasDraft ? ' disabled' : ''}>${escapeHtml(state.admin.isBusy ? 'Saving Icon...' : 'Save Icon')}</button>
-          <button class="hero-button hero-button--secondary" type="button" data-action="member-icon-clear-selection"${hasDraft ? '' : ' disabled'}>Clear Selection</button>
-          ${hasCurrentIcon ? `<button class="hero-button hero-button--secondary" type="button" data-action="member-icon-remove"${state.admin.isBusy ? ' disabled' : ''}>Remove Current Icon</button>` : ''}
-        </div>
-      </form>
-    </article>
-  `;
-}
-
-function renderMemberIconPreview(member, previewUrl, previewName) {
-  if (!previewUrl) {
-    return `
-      <div class="member-icon-preview member-icon-preview--empty">
-        ${renderMemberAvatar({ memberId: cleanText(member?.id), name: cleanText(member?.displayName), size: 'lg' })}
-        <div class="member-icon-preview__copy">
-          <strong>No icon uploaded yet</strong>
-          <span>Choose an image and the app will prepare a square preview here before you save it live.</span>
-        </div>
-      </div>
-    `;
-  }
-
-  return `
-    <div class="member-icon-preview">
-      ${renderMemberAvatar({ memberId: cleanText(member?.id), name: cleanText(member?.displayName), imageUrl: previewUrl, size: 'lg' })}
-      <div class="member-icon-preview__copy">
-        <strong>${escapeHtml(previewName || 'Member icon preview')}</strong>
-        <span>${escapeHtml(cleanText(member?.displayName) || 'Linked member')} will use this icon everywhere the shared member identity appears.</span>
-      </div>
-    </div>
   `;
 }
 
@@ -4262,7 +4100,6 @@ function createDefaultAdminState() {
     inviteClaimForm: createInviteClaimForm(),
     generatedInvite: null,
     passwordResetForm: createPasswordResetForm(),
-    memberIconForm: createEmptyMemberIconForm(),
     wishlistForm: createEmptyWishlistForm(),
     modelsForm: createEmptyYoModelsForm(),
     chatForm: createEmptyChatForm(CHAT_CHANNELS[0].key),
@@ -4288,16 +4125,6 @@ function createEmptyMemberForm(member = null) {
     birthdayRaw: cleanText(member?.birthdayRaw),
     groupRole: normalizeGroupRole(member?.groupRole),
     notes: cleanText(member?.notes),
-  };
-}
-
-function createEmptyMemberIconForm() {
-  return {
-    file: null,
-    previewUrl: '',
-    name: '',
-    path: '',
-    mimeType: '',
   };
 }
 
@@ -4777,7 +4604,6 @@ async function handleAdminAnnouncementSubmit(event) {
 }
 
 async function handleAdminSignOut() {
-  revokeMemberIconPreviewUrl(state.admin.memberIconForm.previewUrl);
   await signOut();
   state.admin = createDefaultAdminState();
   state.admin.isReady = true;
@@ -4786,144 +4612,6 @@ async function handleAdminSignOut() {
   }
   setAdminNotice('Signed out.', 'muted');
   render();
-}
-
-async function handleMemberIconSubmit() {
-  const linkedMember = getLinkedWishlistMember();
-  const iconDraft = state.admin.memberIconForm;
-
-  if (!state.admin.session) {
-    setAdminNotice('Sign in before uploading a member icon.', 'error');
-    render();
-    return;
-  }
-
-  if (!linkedMember) {
-    setAdminNotice('Claim your member invite before uploading an icon.', 'error');
-    render();
-    return;
-  }
-
-  if (!iconDraft.file) {
-    setAdminNotice('Choose an icon image before saving it.', 'error');
-    render();
-    return;
-  }
-
-  const previousIconPath = cleanText(linkedMember.iconPath);
-  let upload = null;
-
-  state.admin.isBusy = true;
-  setAdminNotice('Saving your member icon...', 'muted');
-  render();
-
-  try {
-    upload = await uploadMemberIconFile(iconDraft.file, linkedMember);
-
-    const response = await supabaseFetch('rpc/set_member_icon', {
-      method: 'POST',
-      useSession: true,
-      body: {
-        p_member_id: linkedMember.id,
-        p_icon_url: upload.publicUrl,
-        p_icon_path: upload.path,
-        p_icon_mime_type: upload.mimeType,
-        p_icon_name: upload.name,
-      },
-    });
-
-    if (!response.ok) {
-      throw new Error(await getSupabaseErrorMessage(response, 'member-icon'));
-    }
-
-    if (previousIconPath && previousIconPath !== upload.path && typeof storageFetch === 'function') {
-      await storageFetch(MEMBER_ICON_BUCKET, previousIconPath, {
-        method: 'DELETE',
-        useSession: true,
-      }).catch(() => null);
-    }
-
-    resetMemberIconSelection();
-    await loadLiveMembers();
-    setAdminNotice('Your member icon is now live across the hub.', 'success');
-  } catch (error) {
-    if (upload?.path && typeof storageFetch === 'function') {
-      await storageFetch(MEMBER_ICON_BUCKET, upload.path, {
-        method: 'DELETE',
-        useSession: true,
-      }).catch(() => null);
-    }
-
-    setAdminNotice(error instanceof Error ? error.message : 'Could not save that member icon.', 'error');
-  } finally {
-    state.admin.isBusy = false;
-    render();
-  }
-}
-
-async function handleMemberIconRemove() {
-  const linkedMember = getLinkedWishlistMember();
-  const previousIconPath = cleanText(linkedMember?.iconPath);
-
-  if (!state.admin.session) {
-    setAdminNotice('Sign in before removing a member icon.', 'error');
-    render();
-    return;
-  }
-
-  if (!linkedMember) {
-    setAdminNotice('Claim your member invite before changing your icon.', 'error');
-    render();
-    return;
-  }
-
-  if (!linkedMember.iconUrl) {
-    setAdminNotice('There is no saved member icon to remove.', 'error');
-    render();
-    return;
-  }
-
-  if (!window.confirm('Remove your current member icon? Your initials will show until you upload a new one.')) {
-    return;
-  }
-
-  state.admin.isBusy = true;
-  setAdminNotice('Removing your member icon...', 'muted');
-  render();
-
-  try {
-    const response = await supabaseFetch('rpc/set_member_icon', {
-      method: 'POST',
-      useSession: true,
-      body: {
-        p_member_id: linkedMember.id,
-        p_icon_url: null,
-        p_icon_path: null,
-        p_icon_mime_type: null,
-        p_icon_name: null,
-      },
-    });
-
-    if (!response.ok) {
-      throw new Error(await getSupabaseErrorMessage(response, 'member-icon'));
-    }
-
-    if (previousIconPath && typeof storageFetch === 'function') {
-      await storageFetch(MEMBER_ICON_BUCKET, previousIconPath, {
-        method: 'DELETE',
-        useSession: true,
-      }).catch(() => null);
-    }
-
-    resetMemberIconSelection();
-    await loadLiveMembers();
-    setAdminNotice('Your member icon was removed.', 'success');
-  } catch (error) {
-    setAdminNotice(error instanceof Error ? error.message : 'Could not remove that member icon.', 'error');
-  } finally {
-    state.admin.isBusy = false;
-    render();
-  }
 }
 
 function beginEditingMember(memberId) {
@@ -5033,12 +4721,6 @@ function resetGiveawayEditor() {
   state.admin.editingGiveawayId = '';
   state.admin.giveawayForm = createEmptyGiveawayForm(null, fallbackMemberId);
   setAdminNotice('Giveaway form reset.', 'muted');
-}
-
-function resetMemberIconSelection() {
-  revokeMemberIconPreviewUrl(state.admin.memberIconForm.previewUrl);
-  state.admin.memberIconForm = createEmptyMemberIconForm();
-  setAdminNotice('Member icon selection cleared.', 'muted');
 }
 
 function resetChatComposer() {
@@ -5427,38 +5109,6 @@ function handleYoModelsImageSelection(target) {
   setAdminNotice(`${file.name || 'Image'} is ready for YoModels.`, 'success');
 }
 
-async function handleMemberIconSelection(target) {
-  const file = target instanceof HTMLInputElement && target.files ? target.files[0] : null;
-
-  revokeMemberIconPreviewUrl(state.admin.memberIconForm.previewUrl);
-
-  if (!file) {
-    state.admin.memberIconForm = createEmptyMemberIconForm();
-    render();
-    return;
-  }
-
-  setAdminNotice('Preparing your square icon preview...', 'muted');
-  render();
-
-  try {
-    const preparedFile = await prepareMemberIconFile(file);
-    state.admin.memberIconForm = {
-      file: preparedFile,
-      previewUrl: URL.createObjectURL(preparedFile),
-      name: preparedFile.name || 'member-icon',
-      path: '',
-      mimeType: preparedFile.type || '',
-    };
-    setAdminNotice('Your icon preview is ready to save.', 'success');
-  } catch (error) {
-    state.admin.memberIconForm = createEmptyMemberIconForm();
-    setAdminNotice(error instanceof Error ? error.message : 'Could not prepare that icon image.', 'error');
-  }
-
-  render();
-}
-
 function validateWishlistImageFile(file) {
   if (!file) {
     throw new Error('Choose a PNG or JPEG wish list image before saving.');
@@ -5515,41 +5165,7 @@ function validateYoModelsImageFile(file) {
   }
 }
 
-function validateMemberIconSourceFile(file) {
-  if (!file) {
-    throw new Error('Choose a PNG, JPEG, or WebP image before saving your icon.');
-  }
-
-  if (!MEMBER_ICON_TYPES.has(file.type)) {
-    throw new Error('Member icons must be PNG, JPEG, or WebP images.');
-  }
-
-  if (file.size > MEMBER_ICON_SOURCE_MAX_BYTES) {
-    throw new Error(`Choose an image that is ${Math.round(MEMBER_ICON_SOURCE_MAX_BYTES / (1024 * 1024))} MB or smaller before processing.`);
-  }
-}
-
-function validateMemberIconFile(file) {
-  validateMemberIconSourceFile(file);
-
-  if (file.size > MEMBER_ICON_MAX_BYTES) {
-    throw new Error(`Processed member icons must stay under ${Math.round(MEMBER_ICON_MAX_BYTES / 1024)} KB.`);
-  }
-}
-
 function revokeWishlistPreviewUrl(url) {
-  if (!url || !String(url).startsWith('blob:')) {
-    return;
-  }
-
-  try {
-    URL.revokeObjectURL(url);
-  } catch {
-    // Ignore stale object URLs.
-  }
-}
-
-function revokeMemberIconPreviewUrl(url) {
   if (!url || !String(url).startsWith('blob:')) {
     return;
   }
@@ -6898,98 +6514,6 @@ async function uploadChatImageFile(file, member, channelKey) {
   };
 }
 
-async function uploadMemberIconFile(file, member) {
-  validateMemberIconFile(file);
-
-  if (typeof uploadStorageObject !== 'function') {
-    throw new Error('Storage uploads are not available. Reload the app and try again.');
-  }
-
-  const objectPath = buildMemberIconStoragePath(member.id, file);
-  const upload = await uploadStorageObject(MEMBER_ICON_BUCKET, objectPath, file, {
-    cacheControl: '3600',
-  });
-
-  return {
-    path: upload.path,
-    publicUrl: upload.publicUrl,
-    mimeType: file.type,
-    name: file.name || 'member-icon',
-  };
-}
-
-async function prepareMemberIconFile(file) {
-  validateMemberIconSourceFile(file);
-
-  const image = await loadImageForProcessing(file);
-  const sourceWidth = image.naturalWidth || image.width;
-  const sourceHeight = image.naturalHeight || image.height;
-  const cropSize = Math.min(sourceWidth, sourceHeight);
-  const offsetX = Math.max(0, Math.floor((sourceWidth - cropSize) / 2));
-  const offsetY = Math.max(0, Math.floor((sourceHeight - cropSize) / 2));
-  const canvas = document.createElement('canvas');
-
-  canvas.width = MEMBER_ICON_TARGET_SIZE;
-  canvas.height = MEMBER_ICON_TARGET_SIZE;
-
-  const context = canvas.getContext('2d');
-
-  if (!context) {
-    throw new Error('Could not prepare that icon image.');
-  }
-
-  context.clearRect(0, 0, MEMBER_ICON_TARGET_SIZE, MEMBER_ICON_TARGET_SIZE);
-  context.drawImage(
-    image,
-    offsetX,
-    offsetY,
-    cropSize,
-    cropSize,
-    0,
-    0,
-    MEMBER_ICON_TARGET_SIZE,
-    MEMBER_ICON_TARGET_SIZE,
-  );
-
-  let blob = await canvasToBlob(canvas, 'image/webp', 0.9);
-
-  if (!blob) {
-    blob = await canvasToBlob(canvas, 'image/png');
-  }
-
-  if (!blob) {
-    throw new Error('Could not prepare that icon image.');
-  }
-
-  if (blob.size > MEMBER_ICON_MAX_BYTES) {
-    throw new Error(`Processed member icons must stay under ${Math.round(MEMBER_ICON_MAX_BYTES / 1024)} KB.`);
-  }
-
-  const extension = blob.type === 'image/png' ? 'png' : blob.type === 'image/webp' ? 'webp' : 'jpg';
-  const cleanBaseName = cleanText(file.name)
-    .replace(/\.[^.]+$/, '')
-    .replace(/[^a-z0-9]+/gi, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 40) || 'member-icon';
-
-  return new File([blob], `${cleanBaseName}.${extension}`, {
-    type: blob.type || 'image/png',
-    lastModified: Date.now(),
-  });
-}
-
-function buildMemberIconStoragePath(memberId, file) {
-  const extension = file.type === 'image/png' ? 'png' : file.type === 'image/webp' ? 'webp' : 'jpg';
-  const cleanBaseName = cleanText(file.name)
-    .replace(/\.[^.]+$/, '')
-    .replace(/[^a-z0-9]+/gi, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 40) || 'member-icon';
-  const timestamp = new Date().toISOString().replace(/[^0-9]/g, '').slice(0, 14);
-
-  return `${cleanText(memberId)}/profile/${timestamp}-${cleanBaseName}.${extension}`;
-}
-
 function buildWishlistImageStoragePath(memberId, weekStartDate, file) {
   const extension = file.type === 'image/png' ? 'png' : 'jpg';
   const cleanBaseName = cleanText(file.name)
@@ -7037,28 +6561,6 @@ function buildChatImageStoragePath(memberId, channelKey, file) {
   const timestamp = new Date().toISOString().replace(/[^0-9]/g, '').slice(0, 14);
 
   return `${cleanText(memberId)}/${normalizeChatChannelKey(channelKey)}/${timestamp}-${cleanBaseName}.${extension}`;
-}
-
-async function loadImageForProcessing(file) {
-  const objectUrl = URL.createObjectURL(file);
-
-  try {
-    return await new Promise((resolve, reject) => {
-      const image = new Image();
-
-      image.onload = () => resolve(image);
-      image.onerror = () => reject(new Error('Could not read that image file.'));
-      image.src = objectUrl;
-    });
-  } finally {
-    URL.revokeObjectURL(objectUrl);
-  }
-}
-
-function canvasToBlob(canvas, type, quality) {
-  return new Promise((resolve) => {
-    canvas.toBlob((blob) => resolve(blob), type, quality);
-  });
 }
 
 function buildWishlistPostPayload(formData, member, imageUpload = null, currentWishlist = null) {
@@ -8370,7 +7872,7 @@ function formatEventWhenLabel(eventDate, startTime, endTime, timezone) {
   }
 
   if (!startTime) {
-    return `${dateLabel} • All day`;
+    return `${dateLabel} G�� All day`;
   }
 
   const startLabel = formatTimeLabel(startTime);
@@ -8378,10 +7880,10 @@ function formatEventWhenLabel(eventDate, startTime, endTime, timezone) {
   const timezoneLabel = cleanText(timezone);
 
   if (endLabel) {
-    return `${dateLabel} • ${startLabel} - ${endLabel}${timezoneLabel ? ` ${timezoneLabel}` : ''}`;
+    return `${dateLabel} G�� ${startLabel} - ${endLabel}${timezoneLabel ? ` ${timezoneLabel}` : ''}`;
   }
 
-  return `${dateLabel} • ${startLabel}${timezoneLabel ? ` ${timezoneLabel}` : ''}`;
+  return `${dateLabel} G�� ${startLabel}${timezoneLabel ? ` ${timezoneLabel}` : ''}`;
 }
 
 function formatEventDateLabel(eventDate) {
@@ -8883,7 +8385,7 @@ function formatWishlistWeekLabel(weekStartDate) {
     day: 'numeric',
   });
 
-  return `Week of ${label} • Sunday ET reset`;
+  return `Week of ${label} G�� Sunday ET reset`;
 }
 
 function formatWishlistLastUpdatedLabel(value) {
@@ -9015,7 +8517,7 @@ function formatGiveawayWinnerLabel(value) {
     day: 'numeric',
     hour: 'numeric',
     minute: '2-digit',
-  })} • Giveaway closed`;
+  })} G�� Giveaway closed`;
 }
 
 function formatGiveawayEntryCreatedLabel(value) {
@@ -9146,12 +8648,12 @@ function formatGiveawayComposerIdentity(member) {
   }
 
   const memberName = cleanText(member.facebookName || member.displayName);
-  return member.inGameName ? `${memberName} • YoWorld: ${member.inGameName}` : memberName;
+  return member.inGameName ? `${memberName} G�� YoWorld: ${member.inGameName}` : memberName;
 }
 
 function formatGiveawayGiverLine(giveaway) {
   return giveaway.giverInGameName
-    ? `${giveaway.giverName} • YoWorld: ${giveaway.giverInGameName}`
+    ? `${giveaway.giverName} G�� YoWorld: ${giveaway.giverInGameName}`
     : giveaway.giverName;
 }
 

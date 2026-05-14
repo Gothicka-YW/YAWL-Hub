@@ -15,6 +15,10 @@ create table if not exists public.members (
   facebook_name text not null,
   in_game_name text,
   house_key text,
+  icon_url text,
+  icon_path text,
+  icon_mime_type text,
+  icon_name text,
   birthday_raw text,
   birthday_month smallint,
   birthday_day smallint,
@@ -25,7 +29,11 @@ create table if not exists public.members (
   constraint members_birthday_month_check
     check (birthday_month is null or birthday_month between 1 and 12),
   constraint members_birthday_day_check
-    check (birthday_day is null or birthday_day between 1 and 31)
+    check (birthday_day is null or birthday_day between 1 and 31),
+  constraint members_icon_url_check
+    check (icon_url is null or icon_url ~* '^https?://'),
+  constraint members_icon_mime_type_check
+    check (icon_mime_type is null or icon_mime_type in ('image/png', 'image/jpeg', 'image/webp'))
 );
 
 comment on table public.members is 'YoAngels Wish List member directory.';

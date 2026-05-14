@@ -1,4 +1,4 @@
--- Apply after 20260514000400_member_icons.sql.
+-- Apply after 20260514000300_fix_invite_hash_pgcrypto_lookup.sql.
 -- Adds a shared dashboard announcement editable by staff from the app.
 
 create or replace function public.current_user_can_manage_dashboard_settings()
