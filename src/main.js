@@ -31,6 +31,9 @@ const ADMIN_YOMODELS_FIELD_MAP = {
 const facebookGroupUrl = sanitizeUrl(String(window.YAWL_CONFIG.facebookGroupUrl || ''));
 const facebookThreadUrl = sanitizeUrl(String(dashboard.facebookThreadUrl || ''));
 const yoKeysWidgetUrl = sanitizeUrl(String(window.YAWL_CONFIG.yoKeysWidgetUrl || ''));
+const DASHBOARD_SETTINGS_KEY = 'main';
+const DEFAULT_DASHBOARD_ANNOUNCEMENT = cleanText(String(dashboard.announcement || ''));
+const DASHBOARD_ANNOUNCEMENT_MAX_LENGTH = 500;
 
 const STORAGE_KEY = 'yawl-hub-private-tracker';
 const YOMODELS_IMAGE_BUCKET = 'yomodels-images';
@@ -101,6 +104,9 @@ const ADMIN_EVENT_FIELD_MAP = {
   maybe_count: 'maybeCount',
   no_count: 'noCount',
   details: 'details',
+};
+const ADMIN_ANNOUNCEMENT_FIELD_MAP = {
+  announcement: 'announcement',
 };
 const ADMIN_WISHLIST_FIELD_MAP = {
   member_id: 'memberId',
@@ -184,6 +190,9 @@ const initialChatMessages = normalizeMockChatMessages(mockChatMessages, initialM
 
 const state = {
   activeSection: 'dashboard',
+  dashboardAnnouncement: DEFAULT_DASHBOARD_ANNOUNCEMENT,
+  dashboardAnnouncementSource: hasSupabaseConfig ? 'loading' : 'mock',
+  dashboardAnnouncementSourceMessage: hasSupabaseConfig ? 'Supabase config detected. Loading dashboard announcement...' : getSupabaseStatus(),
   memberDirectory: createDefaultMemberDirectoryState(),
   privateData: loadPrivateState(),
   members: initialMembers,
@@ -211,6 +220,7 @@ const state = {
 const app = document.querySelector('#app');
 
 render();
+void loadLiveDashboardAnnouncement();
 void loadLiveMembers();
 void loadLiveEvents();
 void loadLiveWishlists();
@@ -448,6 +458,12 @@ app.addEventListener('submit', async (event) => {
     return;
   }
 
+  if (event.target.matches('[data-admin-announcement-form]')) {
+    event.preventDefault();
+    await handleAdminAnnouncementSubmit(event);
+    return;
+  }
+
   if (event.target.matches('[data-admin-member-form]')) {
     event.preventDefault();
     await handleAdminMemberSubmit(event);
@@ -505,6 +521,7 @@ app.addEventListener('submit', async (event) => {
   if (event.target.matches('[data-admin-password-reset-form]')) {
     event.preventDefault();
     await handlePasswordResetSubmit(event);
+    return;
   }
 });
 
@@ -833,7 +850,7 @@ function renderDashboard() {
           </div>
           <span class="tag">${dashboard.weekLabel}</span>
         </div>
-        <p class="panel-lead">${dashboard.announcement}</p>
+        <p class="panel-lead">${escapeHtml(state.dashboardAnnouncement || DEFAULT_DASHBOARD_ANNOUNCEMENT)}</p>
       </article>
 
       ${renderDashboardCalendarPanel(dashboardCalendar)}
@@ -2850,6 +2867,7 @@ function renderAdmin() {
   return `
     <section class="panel-grid panel-grid--admin">
       ${renderAdminSessionPanel()}
+      ${renderAdminAnnouncementPanel()}
       ${canManageMembers() ? renderAdminEditorPanel() : ''}
       ${canManageMembers() ? renderAdminMemberInvitePanel(currentMembers) : ''}
       ${canManageEvents() ? renderAdminEventEditorPanel(currentMembers) : ''}
@@ -3036,6 +3054,36 @@ function renderAdminLaunchPanel() {
       <div class="button-row">
         <button class="hero-button" type="button" data-section="admin">Open Admin Tools</button>
       </div>
+    </article>
+  `;
+}
+
+function renderAdminAnnouncementPanel() {
+  const form = state.admin.announcementForm;
+  const isBusy = state.admin.isBusy;
+
+  return `
+    <article class="panel panel--announcement">
+      <div class="panel__heading">
+        <div>
+          <p class="eyebrow">Dashboard Announcement</p>
+          <h3>Update the message without coding</h3>
+        </div>
+        <span class="tag">Shared live text</span>
+      </div>
+      <p class="panel-lead">This message appears at the top of the dashboard for everyone using the app. Save here to update it live without editing src/data/mockData.js.</p>
+      <form class="admin-form" data-admin-announcement-form>
+        <div class="form-grid">
+          <label class="field-group field-group--wide">
+            <span>Announcement</span>
+            <textarea name="announcement" class="admin-textarea" maxlength="${DASHBOARD_ANNOUNCEMENT_MAX_LENGTH}" placeholder="Write the shared announcement shown on the dashboard.">${escapeHtml(form.announcement)}</textarea>
+            <small class="field-help">Visible to everyone. Keep it short enough to scan quickly from the dashboard card.</small>
+          </label>
+        </div>
+        <div class="button-row admin-form-actions">
+          <button class="hero-button" type="submit"${isBusy ? ' disabled' : ''}>${escapeHtml(isBusy ? 'Saving...' : 'Save Announcement')}</button>
+        </div>
+      </form>
     </article>
   `;
 }
@@ -4047,6 +4095,7 @@ function createDefaultAdminState() {
     noticeTone: 'muted',
     isRecoveryMode: false,
     authForm: createAdminAuthForm(storedSession),
+    announcementForm: createAnnouncementForm(),
     memberInviteForm: createMemberInviteForm(),
     inviteClaimForm: createInviteClaimForm(),
     generatedInvite: null,
@@ -4084,6 +4133,20 @@ function createAdminAuthForm(session = null) {
     email: cleanText(session?.user?.email),
     password: '',
   };
+}
+
+function createAnnouncementForm(announcement = DEFAULT_DASHBOARD_ANNOUNCEMENT) {
+  return {
+    announcement: cleanText(announcement),
+  };
+}
+
+function syncAnnouncementFormWithState(nextAnnouncement, previousAnnouncement = '') {
+  const currentDraft = cleanText(state.admin.announcementForm?.announcement);
+
+  if (!currentDraft || currentDraft === cleanText(previousAnnouncement)) {
+    state.admin.announcementForm = createAnnouncementForm(nextAnnouncement);
+  }
 }
 
 function createPasswordResetForm() {
@@ -4478,6 +4541,68 @@ async function handlePasswordResetSubmit(event) {
   }
 }
 
+async function handleAdminAnnouncementSubmit(event) {
+  if (!hasSupabaseConfig) {
+    setAdminNotice('Supabase config is missing. Add it in src/config.js first.', 'error');
+    render();
+    return;
+  }
+
+  if (!hasAdminToolsAccess()) {
+    setAdminNotice('This account does not have permission to update the dashboard announcement.', 'error');
+    render();
+    return;
+  }
+
+  const formData = new FormData(event.target);
+  const announcement = cleanText(formData.get('announcement'));
+
+  if (!announcement) {
+    setAdminNotice('Write an announcement before saving it.', 'error');
+    render();
+    return;
+  }
+
+  state.admin.isBusy = true;
+  setAdminNotice('Saving the dashboard announcement...', 'muted');
+  render();
+
+  try {
+    const response = await supabaseFetch('dashboard_settings', {
+      method: 'POST',
+      query: new URLSearchParams({ on_conflict: 'setting_key' }).toString(),
+      useSession: true,
+      headers: {
+        Prefer: 'resolution=merge-duplicates,return=representation',
+      },
+      body: {
+        setting_key: DASHBOARD_SETTINGS_KEY,
+        announcement,
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error(await getSupabaseErrorMessage(response, 'dashboard-settings-write'));
+    }
+
+    const rows = await response.json();
+    const savedRow = Array.isArray(rows) ? rows[0] : rows;
+    const previousAnnouncement = state.dashboardAnnouncement;
+    const savedAnnouncement = cleanText(savedRow?.announcement) || announcement;
+
+    state.dashboardAnnouncement = savedAnnouncement;
+    state.dashboardAnnouncementSource = 'live';
+    state.dashboardAnnouncementSourceMessage = 'Loaded the live dashboard announcement from Supabase.';
+    syncAnnouncementFormWithState(savedAnnouncement, previousAnnouncement);
+    setAdminNotice('Dashboard announcement saved.', 'success');
+  } catch (error) {
+    setAdminNotice(error instanceof Error ? error.message : 'Could not save the dashboard announcement.', 'error');
+  } finally {
+    state.admin.isBusy = false;
+    render();
+  }
+}
+
 async function handleAdminSignOut() {
   await signOut();
   state.admin = createDefaultAdminState();
@@ -4618,6 +4743,11 @@ function syncAdminDraftField(target) {
 
   if (target.closest('[data-admin-auth-form]')) {
     syncAdminDraftState('authForm', ADMIN_AUTH_FIELD_MAP, target);
+    return;
+  }
+
+  if (target.closest('[data-admin-announcement-form]')) {
+    syncAdminDraftState('announcementForm', ADMIN_ANNOUNCEMENT_FIELD_MAP, target);
     return;
   }
 
@@ -6669,6 +6799,48 @@ async function loadLiveMembers() {
   render();
 }
 
+async function loadLiveDashboardAnnouncement() {
+  if (!hasSupabaseConfig) {
+    return;
+  }
+
+  try {
+    const response = await supabaseFetch('dashboard_settings', {
+      query: new URLSearchParams({
+        select: 'setting_key,announcement,updated_at',
+        setting_key: `eq.${DASHBOARD_SETTINGS_KEY}`,
+        limit: '1',
+      }).toString(),
+      method: 'GET',
+    });
+
+    if (!response.ok) {
+      throw new Error(await getSupabaseErrorMessage(response, 'dashboard-settings'));
+    }
+
+    const rows = await response.json();
+    const row = Array.isArray(rows) ? rows[0] : rows;
+    const previousAnnouncement = state.dashboardAnnouncement;
+    const nextAnnouncement = cleanText(row?.announcement) || DEFAULT_DASHBOARD_ANNOUNCEMENT;
+
+    state.dashboardAnnouncement = nextAnnouncement;
+    state.dashboardAnnouncementSource = row ? 'live' : 'mock';
+    state.dashboardAnnouncementSourceMessage = row
+      ? 'Loaded the live dashboard announcement from Supabase.'
+      : 'Using the bundled dashboard announcement until a live one is saved.';
+    syncAnnouncementFormWithState(nextAnnouncement, previousAnnouncement);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Could not load the dashboard announcement.';
+
+    state.dashboardAnnouncement = DEFAULT_DASHBOARD_ANNOUNCEMENT;
+    state.dashboardAnnouncementSource = /private|policy|permission|forbidden|unauthorized/i.test(message) ? 'restricted' : 'error';
+    state.dashboardAnnouncementSourceMessage = message;
+    syncAnnouncementFormWithState(DEFAULT_DASHBOARD_ANNOUNCEMENT);
+  }
+
+  render();
+}
+
 async function loadLiveEvents() {
   if (!hasSupabaseConfig) {
     return;
@@ -6955,6 +7127,14 @@ async function getSupabaseErrorMessage(response, context = 'read') {
     : '';
 
   if (response.status === 401 || response.status === 403) {
+    if (context === 'dashboard-settings-write') {
+      return 'This signed-in account does not have permission to update the dashboard announcement yet.';
+    }
+
+    if (context === 'dashboard-settings') {
+      return 'The dashboard settings table is still private. Push supabase/migrations/20260514000500_dashboard_announcement.sql first.';
+    }
+
     if (context === 'write') {
       return 'This signed-in account does not have permission to edit members yet.';
     }
@@ -7035,6 +7215,10 @@ async function getSupabaseErrorMessage(response, context = 'read') {
   }
 
   if (response.status === 404) {
+    if (context === 'dashboard-settings' || context === 'dashboard-settings-write') {
+      return 'The dashboard settings table is not available yet. Push supabase/migrations/20260514000500_dashboard_announcement.sql.';
+    }
+
     if (context === 'staff') {
       return 'The staff permissions table is not available yet. Run supabase/05_member_roles_and_permissions.sql and then supabase/07_admin_editor_auth_policies.sql.';
     }
@@ -7688,7 +7872,7 @@ function formatEventWhenLabel(eventDate, startTime, endTime, timezone) {
   }
 
   if (!startTime) {
-    return `${dateLabel} • All day`;
+    return `${dateLabel} G�� All day`;
   }
 
   const startLabel = formatTimeLabel(startTime);
@@ -7696,10 +7880,10 @@ function formatEventWhenLabel(eventDate, startTime, endTime, timezone) {
   const timezoneLabel = cleanText(timezone);
 
   if (endLabel) {
-    return `${dateLabel} • ${startLabel} - ${endLabel}${timezoneLabel ? ` ${timezoneLabel}` : ''}`;
+    return `${dateLabel} G�� ${startLabel} - ${endLabel}${timezoneLabel ? ` ${timezoneLabel}` : ''}`;
   }
 
-  return `${dateLabel} • ${startLabel}${timezoneLabel ? ` ${timezoneLabel}` : ''}`;
+  return `${dateLabel} G�� ${startLabel}${timezoneLabel ? ` ${timezoneLabel}` : ''}`;
 }
 
 function formatEventDateLabel(eventDate) {
@@ -8201,7 +8385,7 @@ function formatWishlistWeekLabel(weekStartDate) {
     day: 'numeric',
   });
 
-  return `Week of ${label} • Sunday ET reset`;
+  return `Week of ${label} G�� Sunday ET reset`;
 }
 
 function formatWishlistLastUpdatedLabel(value) {
@@ -8333,7 +8517,7 @@ function formatGiveawayWinnerLabel(value) {
     day: 'numeric',
     hour: 'numeric',
     minute: '2-digit',
-  })} • Giveaway closed`;
+  })} G�� Giveaway closed`;
 }
 
 function formatGiveawayEntryCreatedLabel(value) {
@@ -8464,12 +8648,12 @@ function formatGiveawayComposerIdentity(member) {
   }
 
   const memberName = cleanText(member.facebookName || member.displayName);
-  return member.inGameName ? `${memberName} • YoWorld: ${member.inGameName}` : memberName;
+  return member.inGameName ? `${memberName} G�� YoWorld: ${member.inGameName}` : memberName;
 }
 
 function formatGiveawayGiverLine(giveaway) {
   return giveaway.giverInGameName
-    ? `${giveaway.giverName} • YoWorld: ${giveaway.giverInGameName}`
+    ? `${giveaway.giverName} G�� YoWorld: ${giveaway.giverInGameName}`
     : giveaway.giverName;
 }
 

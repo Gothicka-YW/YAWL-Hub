@@ -26,7 +26,8 @@ Use these files in order:
 22. Push `supabase/migrations/20260514000100_yomodels_module.sql` after the chat follow-up if you want the YoModels gallery with Gothicka-only posting and monthly archives.
 23. Push `supabase/migrations/20260514000200_fix_member_invite_rpc.sql` after the YoModels migration if invite-code creation fails with an ambiguous `member_id` reference.
 24. Push `supabase/migrations/20260514000300_fix_invite_hash_pgcrypto_lookup.sql` after the invite RPC hotfix if invite-code creation fails with `function digest(text, unknown) does not exist`.
-25. Create or sign in to a Supabase Auth account that uses the same email as your `staff_permissions` row.
+25. Push `supabase/migrations/20260514000500_dashboard_announcement.sql` after the invite hash hotfix if staff should update the dashboard announcement from the Admin section instead of editing code.
+26. Create or sign in to a Supabase Auth account that uses the same email as your `staff_permissions` row.
 
 Notes:
 
@@ -57,6 +58,7 @@ Notes:
 - `supabase/migrations/20260514000100_yomodels_module.sql` adds the YoModels image gallery, Gothicka-only publishing rights, and the public YoModels storage bucket.
 - `supabase/migrations/20260514000200_fix_member_invite_rpc.sql` qualifies the `member_invites.member_id` column inside `create_member_invite()` so admin invite-code creation works reliably.
 - `supabase/migrations/20260514000300_fix_invite_hash_pgcrypto_lookup.sql` qualifies `extensions.digest(...)` inside `hash_member_invite_code()` so invite-code hashing works with Supabase's `extensions` schema.
+- `supabase/migrations/20260514000500_dashboard_announcement.sql` adds a singleton `dashboard_settings` table so staff can update the dashboard announcement live from the Admin section.
 
 ## Supabase CLI Workflow
 
@@ -86,6 +88,7 @@ Apply the existing SQL files from the terminal:
 - Helper script, YoModels module: `./scripts/apply-supabase-sql.ps1 -Files supabase/migrations/20260514000100_yomodels_module.sql`
 - Helper script, invite RPC hotfix: `./scripts/apply-supabase-sql.ps1 -Files supabase/migrations/20260514000200_fix_member_invite_rpc.sql`
 - Helper script, invite hash pgcrypto hotfix: `./scripts/apply-supabase-sql.ps1 -Files supabase/migrations/20260514000300_fix_invite_hash_pgcrypto_lookup.sql`
+- Helper script, dashboard announcement editor: `./scripts/apply-supabase-sql.ps1 -Files supabase/migrations/20260514000500_dashboard_announcement.sql`
 - Helper script, full ordered set: `./scripts/apply-supabase-sql.ps1 -All`
 - Optional sample event seed: `./scripts/apply-supabase-sql.ps1 -Files supabase/09_seed_sample_event.sql`
 
