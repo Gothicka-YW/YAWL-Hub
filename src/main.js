@@ -351,6 +351,9 @@ app.addEventListener('click', async (event) => {
     case 'admin-refresh-session':
       await initializeAdminSession(true);
       return;
+    case 'admin-copy-generated-invite':
+      await copyGeneratedInviteCode();
+      return;
     case 'admin-sign-out':
       await handleAdminSignOut();
       return;
@@ -3287,6 +3290,7 @@ function renderAdminMemberInvitePanel(currentMembers) {
           <button class="hero-button" type="submit">Create Invite Code</button>
         </div>
       </form>
+      ${generatedInvite ? renderGeneratedInvitePanel(generatedInvite) : ''}
       <p class="muted">Each new code revokes any older unclaimed code for that member. The plain code is shown only once after creation, so send it privately right away.</p>
     </article>
   `;
@@ -3294,10 +3298,13 @@ function renderAdminMemberInvitePanel(currentMembers) {
 
 function renderGeneratedInvitePanel(invite) {
   return `
-    <div class="invite-code-card" aria-live="polite">
+    <div class="invite-code-card" aria-live="polite" data-generated-invite-panel>
       <p class="eyebrow">Latest Invite Code</p>
       <strong>${escapeHtml(invite.memberName)}</strong>
-      <p class="invite-code-card__value">${escapeHtml(invite.code)}</p>
+      <div class="invite-code-card__row">
+        <p class="invite-code-card__value">${escapeHtml(invite.code)}</p>
+        <button class="hero-button hero-button--secondary" type="button" data-action="admin-copy-generated-invite">Copy Code</button>
+      </div>
       <p class="field-help">Expires ${escapeHtml(formatInviteExpiryLabel(invite.expiresAt))}. Only the hashed code is stored in Supabase, so copy and send this code privately now.</p>
     </div>
   `;
@@ -5900,14 +5907,41 @@ async function handleAdminMemberInviteSubmit(event) {
       memberName: targetMember.displayName,
       expiresAt: cleanText(inviteRow?.expires_at),
     };
-    setAdminNotice(`Invite code ready for ${targetMember.displayName}. Send it privately now.`, 'success');
+    try {
+      await copyTextToClipboard(inviteCode);
+      setAdminNotice(`Invite code ready for ${targetMember.displayName}. It was copied to your clipboard.`, 'success');
+    } catch {
+      setAdminNotice(`Invite code ready for ${targetMember.displayName}. Copy it from the panel below.`, 'success');
+    }
   } catch (error) {
     state.admin.generatedInvite = null;
     setAdminNotice(error instanceof Error ? error.message : 'Could not create that invite code.', 'error');
   } finally {
     state.admin.isBusy = false;
     render();
+    if (state.admin.generatedInvite) {
+      scheduleScrollTo('[data-generated-invite-panel]');
+    }
   }
+}
+
+async function copyGeneratedInviteCode() {
+  const invite = state.admin.generatedInvite;
+
+  if (!invite?.code) {
+    setAdminNotice('There is no generated invite code to copy yet.', 'error');
+    render();
+    return;
+  }
+
+  try {
+    await copyTextToClipboard(invite.code);
+    setAdminNotice(`Copied the invite code for ${invite.memberName}.`, 'success');
+  } catch (error) {
+    setAdminNotice(error instanceof Error ? error.message : 'Could not copy that invite code.', 'error');
+  }
+
+  render();
 }
 
 async function handleMemberInviteClaimSubmit(event) {

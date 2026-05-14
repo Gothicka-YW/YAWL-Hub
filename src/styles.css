@@ -902,6 +902,14 @@ textarea {
   font-size: 1rem;
 }
 
+.invite-code-card__row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
 .invite-code-card__value {
   margin: 0;
   font-family: "Courier New", monospace;
@@ -909,6 +917,7 @@ textarea {
   font-weight: 700;
   letter-spacing: 0.16em;
   color: var(--teal);
+  overflow-wrap: anywhere;
 }
 
 .invite-code-input {
