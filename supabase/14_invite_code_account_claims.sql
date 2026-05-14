@@ -82,7 +82,7 @@ returns text
 language sql
 immutable
 as $$
-  select encode(digest(public.normalize_member_invite_code(raw_code), 'sha256'), 'hex');
+  select encode(extensions.digest(public.normalize_member_invite_code(raw_code), 'sha256'::text), 'hex');
 $$;
 
 create or replace function public.member_has_linked_account(target_member_id uuid)
