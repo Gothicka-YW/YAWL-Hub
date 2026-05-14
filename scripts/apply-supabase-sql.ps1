@@ -53,7 +53,8 @@ $orderedRepoFiles = @(
   'supabase\migrations\20260513000300_winner_closes_giveaway.sql',
   'supabase\migrations\20260513000400_chat_module.sql',
   'supabase\migrations\20260513000500_admin_chat_posting.sql',
-  'supabase\migrations\20260514000100_yomodels_module.sql'
+  'supabase\migrations\20260514000100_yomodels_module.sql',
+  'supabase\migrations\20260514000200_fix_member_invite_rpc.sql'
 )
 
 if ($All) {

@@ -170,11 +170,11 @@ begin
     raise exception 'That member already has a claimed account.';
   end if;
 
-  update public.member_invites
+  update public.member_invites as invites
   set revoked_at = now()
-  where member_id = p_member_id
-    and claimed_at is null
-    and revoked_at is null;
+  where invites.member_id = p_member_id
+    and invites.claimed_at is null
+    and invites.revoked_at is null;
 
   insert into public.member_invites (
     member_id,
