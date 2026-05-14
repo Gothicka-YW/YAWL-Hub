@@ -1,5 +1,7 @@
  :root {
   color-scheme: light;
+  --font-body: "Plus Jakarta Sans", "Trebuchet MS", "Gill Sans", sans-serif;
+  --font-display: "Fraunces", Georgia, "Times New Roman", serif;
   --canvas: #f6eee1;
   --canvas-deep: #ead2af;
   --panel: rgba(255, 251, 244, 0.78);
@@ -34,7 +36,7 @@ html {
 }
 
 body {
-  font-family: "Trebuchet MS", "Gill Sans", sans-serif;
+  font-family: var(--font-body);
   font-size: 0.97rem;
   color: var(--ink);
   background:
@@ -131,7 +133,7 @@ button {
 .stat-card strong,
 .launch-tile__title {
   margin: 0;
-  font-family: Georgia, "Times New Roman", serif;
+  font-family: var(--font-display);
   letter-spacing: 0.02em;
 }
 
@@ -1632,7 +1634,7 @@ textarea {
 
 .wishlist-comments h4 {
   margin: 0.2rem 0 0;
-  font-family: Georgia, "Times New Roman", serif;
+  font-family: var(--font-display);
   font-size: 1.1rem;
 }
 
