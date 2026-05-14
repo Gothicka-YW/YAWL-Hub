@@ -1502,31 +1502,157 @@ textarea {
   padding: 0.56rem 0.78rem;
 }
 
-.wishlist-image-form .admin-textarea {
-  min-height: 96px;
-}
-
 .wishlist-upload-field input[type="file"] {
   padding: 0.7rem;
+}
+
+.wishlist-composer {
+  gap: 0.95rem;
+}
+
+.wishlist-composer__layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(280px, 0.88fr);
+  gap: 0.85rem;
+  align-items: start;
+}
+
+.wishlist-composer__main,
+.wishlist-composer__side {
+  display: grid;
+  gap: 0.85rem;
+}
+
+.wishlist-composer__section {
+  display: grid;
+  gap: 0.8rem;
+  padding: 0.88rem;
+  border: 1px solid rgba(92, 73, 51, 0.12);
+  border-radius: var(--radius-xl);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(250, 242, 231, 0.9)),
+    var(--panel-strong);
+}
+
+.wishlist-composer__section--identity {
+  gap: 0.72rem;
+}
+
+.wishlist-composer__section--preview {
+  position: sticky;
+  top: 0.85rem;
+}
+
+.wishlist-composer__member-card {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.wishlist-composer__member-card .member-avatar--lg {
+  width: 3rem;
+  height: 3rem;
+}
+
+.wishlist-composer__member-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.42rem;
+}
+
+.wishlist-composer__member-select {
+  margin: 0;
+}
+
+.wishlist-composer__section-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.wishlist-composer__section-heading h4 {
+  margin: 0.14rem 0 0;
+  font-family: var(--font-display);
+  font-size: 1.02rem;
+}
+
+.wishlist-composer__notes-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+.wishlist-composer__field {
+  min-width: 0;
+}
+
+.wishlist-composer__field--summary,
+.wishlist-composer__field--full {
+  grid-column: 1 / -1;
+}
+
+.wishlist-composer__textarea {
+  min-height: 88px;
+}
+
+.wishlist-composer__textarea--summary {
+  min-height: 96px;
 }
 
 .wishlist-image-preview {
   display: grid;
   gap: 0.55rem;
-  min-height: 260px;
-  padding: 0.75rem;
+  min-height: 220px;
+  padding: 0.7rem;
   border: 1px dashed rgba(200, 90, 68, 0.24);
   border-radius: var(--radius-xl);
   background: rgba(255, 252, 247, 0.72);
 }
 
+.wishlist-image-preview {
+  align-content: start;
+}
+
 .wishlist-image-preview__image {
   display: block;
   width: 100%;
-  max-height: 520px;
+  max-height: 420px;
   object-fit: contain;
   border-radius: var(--radius-lg);
   background: rgba(255, 255, 255, 0.88);
+}
+
+.wishlist-composer__file-name {
+  overflow-wrap: anywhere;
+}
+
+.wishlist-composer__meta-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.55rem;
+}
+
+.wishlist-composer__meta-card {
+  display: grid;
+  gap: 0.22rem;
+  min-height: 0;
+  padding: 0.72rem 0.76rem;
+  border: 1px solid rgba(92, 73, 51, 0.12);
+  border-radius: var(--radius-lg);
+  background: rgba(255, 255, 255, 0.78);
+}
+
+.wishlist-composer__meta-card span {
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.wishlist-composer__meta-card strong {
+  line-height: 1.4;
+  overflow-wrap: anywhere;
 }
 
 .giveaway-board {
@@ -1991,6 +2117,19 @@ textarea {
   margin: 1rem 0;
 }
 
+.wishlist-editor-toolbar--composer {
+  margin: 0;
+  padding: 0 0.1rem;
+}
+
+.wishlist-composer__actions {
+  align-items: stretch;
+}
+
+.wishlist-composer__actions .hero-button {
+  flex: 1 1 220px;
+}
+
 .wishlist-editor-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -2331,6 +2470,8 @@ textarea:focus {
 
   .wishlist-card {
     grid-template-columns: 1fr;
+    gap: 0.68rem;
+    padding: 0.68rem;
   }
 
   .giveaway-card {
@@ -2353,6 +2494,59 @@ textarea:focus {
 
   .wishlist-card__media {
     min-height: 220px;
+  }
+
+  .wishlist-card__body {
+    gap: 0.58rem;
+  }
+
+  .wishlist-composer__layout,
+  .wishlist-composer__notes-grid,
+  .wishlist-composer__meta-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .wishlist-composer {
+    gap: 0.8rem;
+  }
+
+  .wishlist-composer__main,
+  .wishlist-composer__side {
+    gap: 0.75rem;
+  }
+
+  .wishlist-composer__section {
+    gap: 0.72rem;
+    padding: 0.75rem;
+  }
+
+  .wishlist-composer__section-heading {
+    flex-direction: column;
+    gap: 0.45rem;
+  }
+
+  .wishlist-composer__section--preview {
+    position: static;
+  }
+
+  .wishlist-editor-toolbar--composer {
+    gap: 0.55rem;
+    padding: 0;
+  }
+
+  .wishlist-editor-toolbar--composer .wishlist-counts,
+  .wishlist-editor-toolbar--composer .hero-button,
+  .wishlist-card__meta,
+  .wishlist-comment__meta-right {
+    width: 100%;
+  }
+
+  .wishlist-image-preview {
+    min-height: 200px;
+  }
+
+  .wishlist-image-preview__image {
+    max-height: 340px;
   }
 
   .giveaway-card__media {
@@ -2390,6 +2584,12 @@ textarea:focus {
     justify-items: start;
   }
 
+  .wishlist-comment__meta-right {
+    display: flex;
+    align-items: center;
+    gap: 0.55rem;
+  }
+
   .wishlist-card__details {
     grid-template-columns: 1fr;
   }
@@ -2398,7 +2598,6 @@ textarea:focus {
     align-items: flex-start;
     flex-direction: column;
   }
-
   .event-grid,
   .event-grid--feed,
   .event-meta,
@@ -2419,5 +2618,109 @@ textarea:focus {
 
   .directory-toolbar__clear {
     width: 100%;
+  }
+}
+
+@media (max-width: 540px) {
+  .wishlist-board {
+    gap: 0.62rem;
+  }
+
+  .wishlist-card {
+    gap: 0.6rem;
+    padding: 0.62rem;
+    border-radius: var(--radius-lg);
+  }
+
+  .wishlist-card__media {
+    min-height: 184px;
+    padding: 0.32rem;
+  }
+
+  .wishlist-card__summary {
+    font-size: 0.9rem;
+    line-height: 1.48;
+  }
+
+  .wishlist-card__detail,
+  .wishlist-comment,
+  .wishlist-comment-form,
+  .wishlist-composer__section,
+  .wishlist-composer__meta-card {
+    padding: 0.62rem 0.68rem;
+  }
+
+  .wishlist-counts,
+  .wishlist-composer__member-tags {
+    gap: 0.38rem;
+  }
+
+  .wishlist-counts--board .wishlist-count {
+    padding: 0.34rem 0.56rem;
+    font-size: 0.68rem;
+  }
+
+  .wishlist-card__actions .hero-button,
+  .wishlist-comment-form__actions .hero-button,
+  .wishlist-composer__actions .hero-button {
+    width: 100%;
+    flex: 1 1 100%;
+  }
+
+  .wishlist-comments {
+    gap: 0.6rem;
+    padding-top: 0.72rem;
+  }
+
+  .wishlist-comments h4 {
+    font-size: 0.94rem;
+  }
+
+  .wishlist-comment__meta-right {
+    flex-wrap: wrap;
+    justify-content: space-between;
+  }
+
+  .wishlist-comment__timestamp {
+    font-size: 0.78rem;
+  }
+
+  .wishlist-comment-gifted {
+    width: 100%;
+    min-width: 0;
+    padding: 0.64rem 0.72rem;
+  }
+
+  .wishlist-comment-textarea,
+  .wishlist-composer__textarea,
+  .wishlist-composer__textarea--summary {
+    min-height: 72px;
+  }
+
+  .wishlist-composer {
+    gap: 0.72rem;
+  }
+
+  .wishlist-composer__member-card .member-avatar--lg {
+    width: 2.55rem;
+    height: 2.55rem;
+  }
+
+  .wishlist-composer__section-heading h4 {
+    font-size: 0.95rem;
+  }
+
+  .wishlist-image-preview {
+    min-height: 172px;
+    padding: 0.55rem;
+  }
+
+  .wishlist-image-preview__image {
+    max-height: 280px;
+  }
+
+  .wishlist-composer__meta-grid,
+  .wishlist-items-grid {
+    grid-template-columns: 1fr;
   }
 }

@@ -1125,6 +1125,9 @@ function renderWishlistComposer(editorState) {
   const isEditingLiveBoard = Boolean(editorState.currentWishlist?.id);
   const previewUrl = form.boardImagePreviewUrl || editorState.currentWishlist?.imageUrl || '';
   const imageName = form.boardImageName || editorState.currentWishlist?.imageName || '';
+  const selectedMemberName = cleanText(selectedMember.displayName || 'Linked member');
+  const selectedMemberInGameName = cleanText(selectedMember.inGameName);
+  const liveBoardUpdatedLabel = cleanText(editorState.currentWishlist?.lastUpdatedLabel);
 
   return `
     <article class="panel panel--span-full">
@@ -1138,64 +1141,133 @@ function renderWishlistComposer(editorState) {
       <p class="panel-lead">${escapeHtml(canManagePosts
         ? 'Staff can post or update the current-week board for any active member. Select the member first, then save the board below.'
         : 'Upload a PNG or JPEG of your wish list board. It always posts under your linked member profile, and saving again updates the same weekly post instead of creating a second one.')}</p>
-      <form class="admin-form wishlist-image-form" data-wishlist-form>
-        <div class="form-grid">
-          ${canManagePosts
-            ? `
-                <label class="field-group">
-                  <span>Posting For</span>
-                  <select class="text-input" name="member_id">
-                    ${renderWishlistMemberOptions(editorState.availableMembers, form.memberId || selectedMember.id)}
-                  </select>
-                  <small class="field-help">Staff can create or update the current-week board for any active member.</small>
-                </label>
-              `
-            : `
-                <label class="field-group">
-                  <span>Posting As</span>
-                  <input class="text-input" type="text" value="${escapeHtml(selectedMember.displayName || 'Linked member')}" readonly />
-                </label>
-                <input type="hidden" name="member_id" value="${escapeHtml(form.memberId)}" />
-              `}
-          <label class="field-group field-group--wide wishlist-upload-field">
-            <span>Wish List Image</span>
-            <input class="text-input" type="file" name="board_image_file" accept="image/png,image/jpeg" />
-            <small class="field-help">PNG or JPEG, up to ${Math.round(WISHLIST_IMAGE_MAX_BYTES / (1024 * 1024))} MB. Choose a new image here when you want to update the post.</small>
-          </label>
-          <div class="wishlist-image-preview field-group--wide">
-            ${previewUrl
-              ? `<img class="wishlist-image-preview__image" src="${previewUrl}" alt="${escapeHtml(`${selectedMember?.displayName || 'Member'} wish list preview`)}" />`
-              : `
-                  <div class="wishlist-card__placeholder">
-                    <strong>No image selected</strong>
-                    <span>Upload a PNG or JPEG wish list board.</span>
+      <form class="admin-form wishlist-image-form wishlist-composer" data-wishlist-form>
+        <div class="wishlist-composer__layout">
+          <div class="wishlist-composer__main">
+            <section class="wishlist-composer__section wishlist-composer__section--identity">
+              <div class="wishlist-composer__member-card">
+                <div class="member-identity member-identity--md">
+                  ${renderMemberAvatar({ memberId: selectedMember.id, name: selectedMemberName, size: 'lg' })}
+                  <div class="member-identity__copy">
+                    <h3>${escapeHtml(selectedMemberName)}</h3>
+                    <span class="member-identity__detail">${escapeHtml(selectedMemberInGameName ? `YoWorld: ${selectedMemberInGameName}` : 'YoWorld name not added yet.')}</span>
                   </div>
-                `}
-            ${imageName ? `<span class="field-help">${escapeHtml(imageName)}</span>` : ''}
+                </div>
+                <div class="wishlist-composer__member-tags">
+                  ${renderWishlistCountTag(isEditingLiveBoard ? 'Updating live board' : 'New live board', isEditingLiveBoard ? 'wishlist-count--success' : '')}
+                  ${previewUrl ? renderWishlistCountTag('Preview ready', 'wishlist-count--success') : renderWishlistCountTag('Image required', 'wishlist-count--warning')}
+                </div>
+              </div>
+              ${canManagePosts
+                ? `
+                    <label class="field-group wishlist-composer__member-select">
+                      <span>Posting For</span>
+                      <select class="text-input" name="member_id">
+                        ${renderWishlistMemberOptions(editorState.availableMembers, form.memberId || selectedMember.id)}
+                      </select>
+                      <small class="field-help">Staff can create or update the current-week board for any active member.</small>
+                    </label>
+                  `
+                : `
+                    <label class="field-group wishlist-composer__member-select">
+                      <span>Posting As</span>
+                      <input class="text-input" type="text" value="${escapeHtml(selectedMemberName)}" readonly />
+                    </label>
+                    <input type="hidden" name="member_id" value="${escapeHtml(form.memberId)}" />
+                  `}
+            </section>
+
+            <section class="wishlist-composer__section">
+              <div class="wishlist-composer__section-heading">
+                <div>
+                  <p class="eyebrow">Board File</p>
+                  <h4>Upload this week's image</h4>
+                </div>
+                <span class="tag tag--muted">PNG or JPEG</span>
+              </div>
+              <label class="field-group wishlist-upload-field">
+                <span>Wish List Image</span>
+                <input class="text-input" type="file" name="board_image_file" accept="image/png,image/jpeg" />
+                <small class="field-help">PNG or JPEG, up to ${Math.round(WISHLIST_IMAGE_MAX_BYTES / (1024 * 1024))} MB. Choose a new image here when you want to update the post.</small>
+              </label>
+            </section>
+
+            <section class="wishlist-composer__section wishlist-composer__section--notes">
+              <div class="wishlist-composer__section-heading">
+                <div>
+                  <p class="eyebrow">Post Copy</p>
+                  <h4>Keep the board note short and clear</h4>
+                </div>
+              </div>
+              <div class="wishlist-composer__notes-grid">
+                <label class="field-group wishlist-composer__field wishlist-composer__field--summary">
+                  <span>Wish List Summary</span>
+                  <textarea name="summary" class="admin-textarea wishlist-composer__textarea wishlist-composer__textarea--summary" placeholder="Short note about this week's board.">${escapeHtml(form.summary)}</textarea>
+                </label>
+                <label class="field-group wishlist-composer__field">
+                  <span>Status Note</span>
+                  <textarea name="status_note" class="admin-textarea wishlist-composer__textarea" placeholder="Example: Updated after evening gifts and porch visits.">${escapeHtml(form.statusNote)}</textarea>
+                </label>
+                <label class="field-group wishlist-composer__field wishlist-composer__field--full">
+                  <span>Thank-you Note</span>
+                  <textarea name="thank_you_note" class="admin-textarea wishlist-composer__textarea" placeholder="Optional public thank-you note for gifters.">${escapeHtml(form.thankYouNote)}</textarea>
+                </label>
+              </div>
+            </section>
+
+            <div class="wishlist-editor-toolbar wishlist-editor-toolbar--composer">
+              <div class="wishlist-counts wishlist-counts--board">
+                ${renderWishlistCountTag(isEditingLiveBoard ? 'Updating current-week post' : 'New current-week post', '')}
+                ${previewUrl ? renderWishlistCountTag('Image ready', 'wishlist-count--success') : renderWishlistCountTag('Image required', 'wishlist-count--warning')}
+              </div>
+              ${selectedMember?.homeLink ? `<a class="hero-button hero-button--secondary" href="${selectedMember.homeLink}" target="_blank" rel="noreferrer">Open ${escapeHtml(selectedMemberName)}'s Home</a>` : ''}
+            </div>
+            <div class="button-row admin-form-actions wishlist-composer__actions">
+              <button class="hero-button" type="submit">${escapeHtml(isEditingLiveBoard ? 'Save This Week\'s Wish List' : 'Post This Week\'s Wish List')}</button>
+              <button class="hero-button hero-button--secondary" type="button" data-action="wishlist-reset-form">Reset Form</button>
+            </div>
           </div>
-          <label class="field-group field-group--wide">
-            <span>Wish List Summary</span>
-            <textarea name="summary" class="admin-textarea" placeholder="Short note about this week's board.">${escapeHtml(form.summary)}</textarea>
-          </label>
-          <label class="field-group field-group--wide">
-            <span>Status Note</span>
-            <textarea name="status_note" class="admin-textarea" placeholder="Example: Updated after evening gifts and porch visits.">${escapeHtml(form.statusNote)}</textarea>
-          </label>
-          <label class="field-group field-group--wide">
-            <span>Thank-you Note</span>
-            <textarea name="thank_you_note" class="admin-textarea" placeholder="Optional public thank-you note for gifters.">${escapeHtml(form.thankYouNote)}</textarea>
-          </label>
-        </div>
-        <div class="wishlist-editor-toolbar">
-          <div class="wishlist-counts wishlist-counts--board">
-            ${renderWishlistCountTag(isEditingLiveBoard ? 'Updating current-week post' : 'New current-week post', '')}
-            ${previewUrl ? renderWishlistCountTag('Image ready', 'wishlist-count--success') : renderWishlistCountTag('Image required', 'wishlist-count--warning')}
-          </div>
-          ${selectedMember?.homeLink ? `<a class="hero-button hero-button--secondary" href="${selectedMember.homeLink}" target="_blank" rel="noreferrer">Open ${escapeHtml(selectedMember.displayName)}'s Home</a>` : ''}
-        </div>
-        <div class="button-row admin-form-actions">
-          <button class="hero-button" type="submit">${escapeHtml(isEditingLiveBoard ? 'Save This Week\'s Wish List' : 'Post This Week\'s Wish List')}</button>
-          <button class="hero-button hero-button--secondary" type="button" data-action="wishlist-reset-form">Reset Form</button>
+
+          <aside class="wishlist-composer__side">
+            <section class="wishlist-composer__section wishlist-composer__section--preview">
+              <div class="wishlist-composer__section-heading">
+                <div>
+                  <p class="eyebrow">Board Preview</p>
+                  <h4>${escapeHtml(selectedMemberName)}</h4>
+                </div>
+                <span class="tag ${previewUrl ? 'wishlist-count--success' : 'tag--muted'}">${escapeHtml(previewUrl ? 'Ready to post' : 'Awaiting image')}</span>
+              </div>
+              <div class="wishlist-image-preview">
+                ${previewUrl
+                  ? `<img class="wishlist-image-preview__image" src="${previewUrl}" alt="${escapeHtml(`${selectedMemberName} wish list preview`)}" />`
+                  : `
+                      <div class="wishlist-card__placeholder">
+                        <strong>No image selected</strong>
+                        <span>Upload a PNG or JPEG wish list board.</span>
+                      </div>
+                    `}
+              </div>
+              ${imageName ? `<span class="field-help wishlist-composer__file-name">${escapeHtml(imageName)}</span>` : ''}
+              <div class="wishlist-composer__meta-grid">
+                <div class="wishlist-composer__meta-card">
+                  <span>Posting week</span>
+                  <strong>${escapeHtml(formatWishlistWeekLabel(getCurrentWishlistWeekStartIso()))}</strong>
+                </div>
+                <div class="wishlist-composer__meta-card">
+                  <span>Board status</span>
+                  <strong>${escapeHtml(isEditingLiveBoard ? 'Live post found' : 'New weekly post')}</strong>
+                </div>
+                <div class="wishlist-composer__meta-card">
+                  <span>Last updated</span>
+                  <strong>${escapeHtml(liveBoardUpdatedLabel || 'Not posted yet')}</strong>
+                </div>
+                <div class="wishlist-composer__meta-card">
+                  <span>Home link</span>
+                  <strong>${escapeHtml(selectedMember.homeLink ? 'Ready' : 'Missing')}</strong>
+                </div>
+              </div>
+            </section>
+          </aside>
         </div>
       </form>
       <p class="muted">Home links come from the member directory automatically. If a member's house key changes, update it in Members and the next wish list save will use the new link.</p>
