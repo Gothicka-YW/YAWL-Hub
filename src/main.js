@@ -196,6 +196,7 @@ const initialChatMessages = normalizeMockChatMessages(mockChatMessages, initialM
 
 const state = {
   activeSection: 'dashboard',
+  isBootstrapping: hasSupabaseConfig,
   dashboardAnnouncement: DEFAULT_DASHBOARD_ANNOUNCEMENT,
   dashboardAnnouncementSource: hasSupabaseConfig ? 'loading' : 'mock',
   dashboardAnnouncementSourceMessage: hasSupabaseConfig ? 'Supabase config detected. Loading dashboard announcement...' : getSupabaseStatus(),
@@ -224,17 +225,31 @@ const state = {
 };
 
 const app = document.querySelector('#app');
+let shellRefs = null;
 
-render();
-void loadLiveDashboardAnnouncement();
-void loadLiveMembers();
-void loadLiveEvents();
-void loadLiveWishlists();
-void loadLiveGiveaways();
-void loadLiveYoModels();
-void loadLiveChatMessages();
-void initializeAdminSession();
-startChatAutoRefresh();
+void initializeApp();
+
+async function initializeApp() {
+  render();
+
+  if (hasSupabaseConfig) {
+    await Promise.allSettled([
+      loadLiveDashboardAnnouncement({ renderOnComplete: false }),
+      loadLiveMembers({ renderOnComplete: false }),
+      loadLiveEvents({ renderOnComplete: false }),
+      loadLiveWishlists({ renderOnComplete: false }),
+      loadLiveGiveaways({ renderOnComplete: false }),
+      loadLiveYoModels({ renderOnComplete: false }),
+      loadLiveChatMessages({ renderOnComplete: false }),
+      initializeAdminSession({ renderOnStart: false, renderOnComplete: false }),
+    ]);
+
+    state.isBootstrapping = false;
+    render();
+  }
+
+  startChatAutoRefresh();
+}
 
 app.addEventListener('click', async (event) => {
   const navButton = event.target.closest('[data-section]');
@@ -569,8 +584,26 @@ app.addEventListener('submit', async (event) => {
 function render() {
   ensureValidActiveSection();
 
+  const refs = ensureShell();
+
+  refs.root.dataset.booting = state.isBootstrapping ? 'true' : 'false';
+  refs.status.className = `status-pill ${state.memberSource === 'live' ? 'status-pill--live' : ''}`.trim();
+  refs.status.textContent = getDirectoryStatusText();
+  refs.nav.innerHTML = renderPrimaryNav();
+  refs.quickCard.innerHTML = renderQuickCard();
+  refs.headerTitle.textContent = getSectionTitle();
+  refs.headerActions.innerHTML = renderHeaderActions();
+  refs.section.setAttribute('aria-busy', state.isBootstrapping ? 'true' : 'false');
+  refs.section.innerHTML = renderSection();
+}
+
+function ensureShell() {
+  if (shellRefs?.root && app.contains(shellRefs.root)) {
+    return shellRefs;
+  }
+
   app.innerHTML = `
-    <div class="shell">
+    <div class="shell" data-shell-root>
       <aside class="sidebar">
         <div class="brand-block">
           <p class="eyebrow">YoAngels Wish List</p>
@@ -578,53 +611,60 @@ function render() {
           <p class="brand-copy">A warm, welcoming group for sharing and celebrating each other in YoWorld.</p>
         </div>
 
-        <div class="status-pill ${state.memberSource === 'live' ? 'status-pill--live' : ''}">
-          ${escapeHtml(getDirectoryStatusText())}
-        </div>
+        <div class="status-pill" data-shell-status></div>
 
-        <nav class="nav-list" aria-label="Primary">
-          ${getSections()
-            .map(
-              (section) => `
-                <button
-                  class="nav-button ${section.id === state.activeSection ? 'nav-button--active' : ''}"
-                  type="button"
-                  data-section="${section.id}"
-                >
-                  <span>${section.label}</span>
-                </button>
-              `,
-            )
-            .join('')}
-        </nav>
+        <nav class="nav-list" aria-label="Primary" data-shell-nav></nav>
 
-        <div class="quick-card">
-          <p class="quick-card__label">Current Week</p>
-          <strong>${dashboard.weekLabel}</strong>
-          ${renderSidebarLinks()}
-        </div>
+        <div class="quick-card" data-shell-quick-card></div>
       </aside>
 
       <main class="content">
-        ${renderHeader()}
-        ${renderSection()}
+        <header class="hero">
+          <div>
+            <p class="eyebrow">YAWL Hub</p>
+            <h2 data-shell-header-title></h2>
+          </div>
+          <div class="hero__actions" data-shell-header-actions></div>
+        </header>
+        <div data-shell-section></div>
       </main>
     </div>
   `;
+
+  shellRefs = {
+    root: app.querySelector('[data-shell-root]'),
+    status: app.querySelector('[data-shell-status]'),
+    nav: app.querySelector('[data-shell-nav]'),
+    quickCard: app.querySelector('[data-shell-quick-card]'),
+    headerTitle: app.querySelector('[data-shell-header-title]'),
+    headerActions: app.querySelector('[data-shell-header-actions]'),
+    section: app.querySelector('[data-shell-section]'),
+  };
+
+  return shellRefs;
 }
 
-function renderHeader() {
+function renderPrimaryNav() {
+  return getSections()
+    .map(
+      (section) => `
+        <button
+          class="nav-button ${section.id === state.activeSection ? 'nav-button--active' : ''}"
+          type="button"
+          data-section="${section.id}"
+        >
+          <span>${section.label}</span>
+        </button>
+      `,
+    )
+    .join('');
+}
+
+function renderQuickCard() {
   return `
-    <header class="hero">
-      <div>
-        <p class="eyebrow">YAWL Hub</p>
-        <h2>${getSectionTitle()}</h2>
-      </div>
-      <div class="hero__actions">
-        ${renderHeaderLinks()}
-        <button class="hero-button hero-button--secondary" type="button" data-section="notes">Personal Notes</button>
-      </div>
-    </header>
+    <p class="quick-card__label">Current Week</p>
+    <strong>${dashboard.weekLabel}</strong>
+    ${renderSidebarLinks()}
   `;
 }
 
@@ -662,7 +702,7 @@ function renderSidebarLinks() {
   return `<div class="quick-links">${links.join('')}</div>`;
 }
 
-function renderHeaderLinks() {
+function renderHeaderActions() {
   const links = [];
 
   if (facebookGroupUrl) {
@@ -682,6 +722,8 @@ function renderHeaderLinks() {
       `<a class="hero-button hero-button--secondary" href="${yoKeysWidgetUrl}" target="_blank" rel="noreferrer">YoKeys Widget</a>`,
     );
   }
+
+  links.push('<button class="hero-button hero-button--secondary" type="button" data-section="notes">Personal Notes</button>');
 
   return links.join('');
 }
@@ -851,6 +893,10 @@ function hasAdminToolsAccess() {
 }
 
 function renderSection() {
+  if (state.isBootstrapping) {
+    return renderBootSection();
+  }
+
   switch (state.activeSection) {
     case 'account':
       return renderAccount();
@@ -874,6 +920,18 @@ function renderSection() {
     default:
       return renderDashboard();
   }
+}
+
+function renderBootSection() {
+  return `
+    <section class="app-boot" aria-live="polite">
+      <div class="app-boot__panel">
+        <p class="eyebrow">Loading YAWL Hub</p>
+        <h3>Syncing live hub data</h3>
+        <p>Pulling the latest announcement, members, events, wish lists, giveaways, account access, and chat before the first full paint.</p>
+      </div>
+    </section>
+  `;
 }
 
 function renderDashboard() {
@@ -4609,9 +4667,19 @@ function createEmptyGiveawayForm(giveaway = null, memberId = '') {
   };
 }
 
-async function initializeAdminSession(showRefreshMessage = false) {
+async function initializeAdminSession(options = {}) {
+  const normalizedOptions = typeof options === 'boolean' ? { showRefreshMessage: options } : options;
+  const {
+    showRefreshMessage = false,
+    renderOnStart = true,
+    renderOnComplete = true,
+  } = normalizedOptions;
+
   state.admin.isReady = false;
-  render();
+
+  if (renderOnStart) {
+    render();
+  }
 
   const redirectSession = await consumeAuthRedirectSession();
   const session = redirectSession.session || (await getValidSession());
@@ -4648,7 +4716,10 @@ async function initializeAdminSession(showRefreshMessage = false) {
   }
 
   state.admin.isReady = true;
-  render();
+
+  if (renderOnComplete) {
+    render();
+  }
 }
 
 async function loadStaffProfile() {
@@ -7673,7 +7744,7 @@ function normalizeNullableText(value) {
   return text || null;
 }
 
-async function loadLiveMembers() {
+async function loadLiveMembers({ renderOnComplete = true } = {}) {
   if (!hasSupabaseConfig) {
     return;
   }
@@ -7702,10 +7773,12 @@ async function loadLiveMembers() {
     state.memberSourceMessage = message;
   }
 
-  render();
+  if (renderOnComplete) {
+    render();
+  }
 }
 
-async function loadLiveDashboardAnnouncement() {
+async function loadLiveDashboardAnnouncement({ renderOnComplete = true } = {}) {
   if (!hasSupabaseConfig) {
     return;
   }
@@ -7744,10 +7817,12 @@ async function loadLiveDashboardAnnouncement() {
     syncAnnouncementFormWithState(DEFAULT_DASHBOARD_ANNOUNCEMENT);
   }
 
-  render();
+  if (renderOnComplete) {
+    render();
+  }
 }
 
-async function loadLiveEvents() {
+async function loadLiveEvents({ renderOnComplete = true } = {}) {
   if (!hasSupabaseConfig) {
     return;
   }
@@ -7779,10 +7854,12 @@ async function loadLiveEvents() {
     state.eventSourceMessage = message;
   }
 
-  render();
+  if (renderOnComplete) {
+    render();
+  }
 }
 
-async function loadLiveWishlists() {
+async function loadLiveWishlists({ renderOnComplete = true } = {}) {
   if (!hasSupabaseConfig) {
     return;
   }
@@ -7863,10 +7940,12 @@ async function loadLiveWishlists() {
     state.wishlistSourceMessage = message;
   }
 
-  render();
+  if (renderOnComplete) {
+    render();
+  }
 }
 
-async function loadLiveGiveaways() {
+async function loadLiveGiveaways({ renderOnComplete = true } = {}) {
   if (!hasSupabaseConfig) {
     return;
   }
@@ -7927,10 +8006,12 @@ async function loadLiveGiveaways() {
     state.giveawaySourceMessage = message;
   }
 
-  render();
+  if (renderOnComplete) {
+    render();
+  }
 }
 
-async function loadLiveYoModels() {
+async function loadLiveYoModels({ renderOnComplete = true } = {}) {
   if (!hasSupabaseConfig) {
     return;
   }
@@ -7962,10 +8043,12 @@ async function loadLiveYoModels() {
     state.modelSourceMessage = message;
   }
 
-  render();
+  if (renderOnComplete) {
+    render();
+  }
 }
 
-async function loadLiveChatMessages() {
+async function loadLiveChatMessages({ renderOnComplete = true } = {}) {
   if (!hasSupabaseConfig) {
     return;
   }
@@ -8000,7 +8083,9 @@ async function loadLiveChatMessages() {
     state.chatSourceMessage = message;
   }
 
-  render();
+  if (renderOnComplete) {
+    render();
+  }
 }
 
 function startChatAutoRefresh() {
