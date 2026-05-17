@@ -30,6 +30,7 @@ Use these files in order:
 26. Push `supabase/migrations/20260514000500_dashboard_announcement.sql` after the member icons migration if staff should update the dashboard announcement from the Admin section instead of editing code.
 27. Push `supabase/migrations/20260514000600_staff_icons.sql` after the dashboard announcement migration if staff/admin accounts should upload their own separate square icon.
 28. Create or sign in to a Supabase Auth account that uses the same email as your `staff_permissions` row.
+29. Push `supabase/migrations/20260517000100_member_activation_rpc.sql` after the staff icon migration if admin/member-manager deactivation is failing through the generic `members` PATCH path.
 
 Notes:
 
@@ -63,6 +64,7 @@ Notes:
 - `supabase/migrations/20260514000400_member_icons.sql` adds reusable member icon columns, the public `member-icons` bucket, and a self-service `set_member_icon()` RPC for linked accounts.
 - `supabase/migrations/20260514000500_dashboard_announcement.sql` adds a singleton `dashboard_settings` table so staff can update the dashboard announcement live from the Admin section.
 - `supabase/migrations/20260514000600_staff_icons.sql` adds reusable staff account icon columns, the public `staff-icons` bucket, and a self-service `set_staff_icon()` RPC for staff accounts.
+- `supabase/migrations/20260517000100_member_activation_rpc.sql` adds a dedicated `set_member_active()` RPC so member deactivation and reactivation do not depend on the broader role-aware `members` table update policy.
 
 ## Supabase CLI Workflow
 
@@ -95,6 +97,7 @@ Apply the existing SQL files from the terminal:
 - Helper script, member icons: `./scripts/apply-supabase-sql.ps1 -Files supabase/migrations/20260514000400_member_icons.sql`
 - Helper script, dashboard announcement editor: `./scripts/apply-supabase-sql.ps1 -Files supabase/migrations/20260514000500_dashboard_announcement.sql`
 - Helper script, staff/admin icons: `./scripts/apply-supabase-sql.ps1 -Files supabase/migrations/20260514000600_staff_icons.sql`
+- Helper script, member activation RPC: `./scripts/apply-supabase-sql.ps1 -Files supabase/migrations/20260517000100_member_activation_rpc.sql`
 - Helper script, full ordered set: `./scripts/apply-supabase-sql.ps1 -All`
 - Optional sample event seed: `./scripts/apply-supabase-sql.ps1 -Files supabase/09_seed_sample_event.sql`
 

@@ -58,7 +58,8 @@ $orderedRepoFiles = @(
   'supabase\migrations\20260514000300_fix_invite_hash_pgcrypto_lookup.sql',
   'supabase\migrations\20260514000400_member_icons.sql',
   'supabase\migrations\20260514000500_dashboard_announcement.sql',
-  'supabase\migrations\20260514000600_staff_icons.sql'
+  'supabase\migrations\20260514000600_staff_icons.sql',
+  'supabase\migrations\20260517000100_member_activation_rpc.sql'
 )
 
 if ($All) {

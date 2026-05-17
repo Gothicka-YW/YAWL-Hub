@@ -6984,20 +6984,17 @@ async function deactivateMember(memberId) {
   render();
 
   try {
-    const response = await supabaseFetch('members', {
-      method: 'PATCH',
-      query: new URLSearchParams({ id: `eq.${memberId}` }).toString(),
+    const response = await supabaseFetch('rpc/set_member_active', {
+      method: 'POST',
       useSession: true,
-      headers: {
-        Prefer: 'return=representation',
-      },
       body: {
-        is_active: false,
+        p_member_id: memberId,
+        p_is_active: false,
       },
     });
 
     if (!response.ok) {
-      throw new Error(await getSupabaseErrorMessage(response, 'write'));
+      throw new Error(await getSupabaseErrorMessage(response, 'member-active-write'));
     }
 
     if (state.admin.editingMemberId === memberId) {
@@ -8120,6 +8117,10 @@ async function getSupabaseErrorMessage(response, context = 'read') {
   if (response.status === 401 || response.status === 403) {
     if (context === 'dashboard-settings-write') {
       return 'This signed-in account does not have permission to update the dashboard announcement yet.';
+    }
+
+    if (context === 'member-active-write') {
+      return 'This signed-in account does not have permission to deactivate that member yet.';
     }
 
     if (context === 'dashboard-settings') {
