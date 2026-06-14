@@ -35,6 +35,7 @@ Use these files in order:
 31. Push `supabase/migrations/20260613000200_member_content_roles.sql` to add member-assigned Editor and Game Master posting permissions.
 32. Push `supabase/migrations/20260613000300_additive_special_role_permissions.sql` so special roles retain Member access while Event Planners manage their own events and Moderators can moderate chat.
 33. Push `supabase/migrations/20260613000400_admin_full_access.sql` so active Admin staff accounts and linked Admin members can perform every management task.
+34. Push `supabase/migrations/20260614000100_admin_account_signup_list.sql` to add the Admin-only Account Signups panel data source.
 
 Notes:
 
@@ -73,6 +74,7 @@ Notes:
 - `supabase/migrations/20260613000200_member_content_roles.sql` lets Editors publish and manage their own YoModels posts, and lets Game Masters publish and manage their own Game events.
 - `supabase/migrations/20260613000300_additive_special_role_permissions.sql` keeps special roles additive to Member access, lets Event Planners manage their own events, and gives Moderators chat deletion without admin impersonation access. Helper remains Member-only until its perk is defined.
 - `supabase/migrations/20260613000400_admin_full_access.sql` makes Admin a universal override for members, roles, events, wish lists, giveaways, YoModels, chat, and dashboard management.
+- `supabase/migrations/20260614000100_admin_account_signup_list.sql` lets Admins list signup email, account activity, confirmation state, and member links without exposing passwords or authentication secrets.
 
 ## Supabase CLI Workflow
 
@@ -110,6 +112,7 @@ Apply the existing SQL files from the terminal:
 - Helper script, member content roles: `./scripts/apply-supabase-sql.ps1 -Files supabase/migrations/20260613000200_member_content_roles.sql`
 - Helper script, additive special-role permissions: `./scripts/apply-supabase-sql.ps1 -Files supabase/migrations/20260613000300_additive_special_role_permissions.sql`
 - Helper script, Admin full access: `./scripts/apply-supabase-sql.ps1 -Files supabase/migrations/20260613000400_admin_full_access.sql`
+- Helper script, Admin account signup list: `./scripts/apply-supabase-sql.ps1 -Files supabase/migrations/20260614000100_admin_account_signup_list.sql`
 - Helper script, full ordered set: `./scripts/apply-supabase-sql.ps1 -All`
 - Optional sample event seed: `./scripts/apply-supabase-sql.ps1 -Files supabase/09_seed_sample_event.sql`
 

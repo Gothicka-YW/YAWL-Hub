@@ -397,6 +397,9 @@ app.addEventListener('click', async (event) => {
     case 'admin-refresh-session':
       await initializeAdminSession(true);
       return;
+    case 'admin-refresh-account-signups':
+      await loadAccountSignups();
+      return;
     case 'admin-copy-generated-invite':
       await copyGeneratedInviteCode();
       return;
@@ -3169,6 +3172,7 @@ function renderAdmin() {
     <section class="panel-grid panel-grid--admin">
       ${renderAdminSessionPanel()}
       ${renderAdminAnnouncementPanel()}
+      ${isAdminAccount() ? renderAdminAccountSignupsPanel() : ''}
       ${canManageMembers() ? renderAdminEditorPanel() : ''}
       ${canManageMembers() ? renderAdminMemberInvitePanel(currentMembers) : ''}
       ${canManageEvents() ? renderAdminEventEditorPanel(currentMembers) : ''}
@@ -3978,6 +3982,77 @@ function getActiveWishlists(limit = 0) {
   return limit > 0 ? activeWishlists.slice(0, limit) : activeWishlists;
 }
 
+function renderAdminAccountSignupsPanel() {
+  const signups = state.admin.accountSignups;
+  const isLoading = state.admin.accountSignupsSource === 'loading';
+
+  return `
+    <article class="panel panel--span-full panel--directory">
+      <div class="panel__heading">
+        <div>
+          <p class="eyebrow">Account Signups</p>
+          <h3>Who has created a YAWL Hub login</h3>
+        </div>
+        <span class="tag">${escapeHtml(isLoading ? 'Loading...' : `${signups.length} accounts`)}</span>
+      </div>
+      <p class="panel-lead">Admins can see account email addresses, signup activity, and member links. Passwords and authentication secrets are never available here.</p>
+      <div class="button-row">
+        <button class="hero-button hero-button--secondary" type="button" data-action="admin-refresh-account-signups"${isLoading ? ' disabled' : ''}>Refresh Signups</button>
+      </div>
+      ${state.admin.accountSignupsSource === 'error'
+        ? `<p class="admin-message admin-message--error">${escapeHtml(state.admin.accountSignupsMessage)}</p>`
+        : ''}
+      <div class="stack-list">
+        ${signups.length
+          ? signups.map(renderAdminAccountSignupRow).join('')
+          : `
+              <div class="list-row list-row--compact">
+                <span>${escapeHtml(isLoading ? 'Loading account signups...' : 'No account signups were found.')}</span>
+              </div>
+            `}
+      </div>
+    </article>
+  `;
+}
+
+function renderAdminAccountSignupRow(signup) {
+  const identityLabel = signup.linkedMemberName || signup.email || 'Unknown account';
+  const statusClass = signup.linkedMemberId || signup.isStaff ? 'tag--role-helper' : 'tag--muted';
+  const roleLabel = signup.linkedMemberId ? formatGroupRoleLabel(signup.memberRole) : '';
+
+  return `
+    <div class="list-row">
+      <div>
+        <strong>${escapeHtml(identityLabel)}</strong>
+        <span class="directory-helper">${escapeHtml(signup.email || 'No email available')}</span>
+      </div>
+      <div class="directory-actions">
+        <span class="tag ${statusClass}">${escapeHtml(signup.statusLabel)}</span>
+        ${roleLabel ? `<span class="tag ${getRoleTagClass(signup.memberRole)}">${escapeHtml(roleLabel)}</span>` : ''}
+        <span class="directory-helper">${escapeHtml(`Signed up ${formatAccountActivityDate(signup.signedUpAt)}`)}</span>
+        <span class="directory-helper">${escapeHtml(signup.lastSignInAt ? `Last sign-in ${formatAccountActivityDate(signup.lastSignInAt)}` : 'Has not signed in yet')}</span>
+        <span class="directory-helper">${escapeHtml(signup.emailConfirmedAt ? 'Email confirmed' : 'Email not confirmed')}</span>
+      </div>
+    </div>
+  `;
+}
+
+function formatAccountActivityDate(value) {
+  const parsedDate = new Date(cleanText(value));
+
+  if (Number.isNaN(parsedDate.getTime())) {
+    return 'date unavailable';
+  }
+
+  return parsedDate.toLocaleString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+}
+
 function getWishlistForMember(memberId) {
   const normalizedMemberId = cleanText(memberId);
 
@@ -4578,6 +4653,9 @@ function createDefaultAdminState() {
     session: storedSession,
     staffProfile: null,
     memberAccount: null,
+    accountSignups: [],
+    accountSignupsSource: 'idle',
+    accountSignupsMessage: '',
     isReady: false,
     isBusy: false,
     notice: '',
@@ -4791,6 +4869,10 @@ async function initializeAdminSession(options = {}) {
   if (session) {
     await loadStaffProfile();
     await loadCurrentMemberAccount();
+
+    if (isAdminAccount()) {
+      await loadAccountSignups({ renderOnComplete: false });
+    }
 
     if (state.admin.isRecoveryMode) {
       state.activeSection = 'account';
@@ -7671,6 +7753,66 @@ function buildWishlistPostPayload(formData, member, imageUpload = null, currentW
   };
 }
 
+async function loadAccountSignups({ renderOnComplete = true } = {}) {
+  if (!hasSupabaseConfig || !state.admin.session || !isAdminAccount()) {
+    state.admin.accountSignups = [];
+    state.admin.accountSignupsSource = 'idle';
+    state.admin.accountSignupsMessage = '';
+    return;
+  }
+
+  state.admin.accountSignupsSource = 'loading';
+  state.admin.accountSignupsMessage = 'Loading account signups...';
+
+  if (renderOnComplete) {
+    render();
+  }
+
+  try {
+    const response = await supabaseFetch('rpc/list_account_signups', {
+      method: 'POST',
+      useSession: true,
+      body: {},
+    });
+
+    if (!response.ok) {
+      throw new Error(await getSupabaseErrorMessage(response, 'account-signups'));
+    }
+
+    const rows = await response.json();
+    state.admin.accountSignups = (Array.isArray(rows) ? rows : []).map(normalizeAccountSignup);
+    state.admin.accountSignupsSource = 'live';
+    state.admin.accountSignupsMessage = `Loaded ${state.admin.accountSignups.length} account signups.`;
+  } catch (error) {
+    state.admin.accountSignups = [];
+    state.admin.accountSignupsSource = 'error';
+    state.admin.accountSignupsMessage = error instanceof Error ? error.message : 'Could not load account signups.';
+  }
+
+  if (renderOnComplete) {
+    render();
+  }
+}
+
+function normalizeAccountSignup(row) {
+  const linkedMemberId = cleanText(row?.linked_member_id);
+  const linkedMemberName = cleanText(row?.linked_member_name);
+  const isStaff = Boolean(row?.is_staff);
+
+  return {
+    authUserId: cleanText(row?.auth_user_id),
+    email: cleanText(row?.email).toLowerCase(),
+    signedUpAt: cleanText(row?.signed_up_at),
+    lastSignInAt: cleanText(row?.last_sign_in_at),
+    emailConfirmedAt: cleanText(row?.email_confirmed_at),
+    linkedMemberId,
+    linkedMemberName,
+    memberRole: normalizeGroupRole(row?.member_role),
+    isStaff,
+    statusLabel: linkedMemberId ? 'Member linked' : (isStaff ? 'Staff account' : 'Not linked yet'),
+  };
+}
+
 function buildGiveawayPayload(formData, member) {
   const title = cleanText(formData.get('title'));
   const itemText = cleanText(formData.get('item_text'));
@@ -8242,6 +8384,10 @@ async function getSupabaseErrorMessage(response, context = 'read') {
       return 'This signed-in account does not have permission to edit events yet.';
     }
 
+    if (context === 'account-signups') {
+      return 'Only Admins can view account signups.';
+    }
+
     if (context === 'giveaway-write') {
       return 'This signed-in account does not have permission to post or close giveaways yet.';
     }
@@ -8310,6 +8456,10 @@ async function getSupabaseErrorMessage(response, context = 'read') {
   }
 
   if (response.status === 404) {
+    if (context === 'account-signups') {
+      return 'The account signup list is not available yet. Push supabase/migrations/20260614000100_admin_account_signup_list.sql.';
+    }
+
     if (context === 'dashboard-settings' || context === 'dashboard-settings-write') {
       return 'The dashboard settings table is not available yet. Push supabase/migrations/20260514000500_dashboard_announcement.sql.';
     }
