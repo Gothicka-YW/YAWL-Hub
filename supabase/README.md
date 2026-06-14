@@ -23,7 +23,7 @@ Use these files in order:
 19. Push `supabase/migrations/20260513000300_winner_closes_giveaway.sql` after the reroll migration so winner selection also stamps the giveaway closed immediately.
 20. Push `supabase/migrations/20260513000400_chat_module.sql` after the winner-close migration to add the General, Giveaways, and Models chat rooms, admin moderation, and chat image uploads.
 21. Push `supabase/migrations/20260513000500_admin_chat_posting.sql` after the chat module migration so admins can post chat messages as any active member profile.
-22. Push `supabase/migrations/20260514000100_yomodels_module.sql` after the chat follow-up if you want the YoModels gallery with Gothicka-only posting and monthly archives.
+22. Push `supabase/migrations/20260514000100_yomodels_module.sql` after the chat follow-up to create the YoModels gallery and monthly archives.
 23. Push `supabase/migrations/20260514000200_fix_member_invite_rpc.sql` after the YoModels migration if invite-code creation fails with an ambiguous `member_id` reference.
 24. Push `supabase/migrations/20260514000300_fix_invite_hash_pgcrypto_lookup.sql` after the invite RPC hotfix if invite-code creation fails with `function digest(text, unknown) does not exist`.
 25. Push `supabase/migrations/20260514000400_member_icons.sql` after the invite hash hotfix if members should upload a shared square icon that appears across chat, wish lists, giveaways, and the directory.
@@ -31,6 +31,10 @@ Use these files in order:
 27. Push `supabase/migrations/20260514000600_staff_icons.sql` after the dashboard announcement migration if staff/admin accounts should upload their own separate square icon.
 28. Create or sign in to a Supabase Auth account that uses the same email as your `staff_permissions` row.
 29. Push `supabase/migrations/20260517000100_member_activation_rpc.sql` after the staff icon migration if admin/member-manager deactivation is failing through the generic `members` PATCH path.
+30. Push `supabase/migrations/20260613000100_persistent_member_wishlists.sql` to consolidate older weekly posts and enforce one continuously updated wish list per member.
+31. Push `supabase/migrations/20260613000200_member_content_roles.sql` to add member-assigned Editor and Game Master posting permissions.
+32. Push `supabase/migrations/20260613000300_additive_special_role_permissions.sql` so special roles retain Member access while Event Planners manage their own events and Moderators can moderate chat.
+33. Push `supabase/migrations/20260613000400_admin_full_access.sql` so active Admin staff accounts and linked Admin members can perform every management task.
 
 Notes:
 
@@ -48,8 +52,8 @@ Notes:
 - `07_admin_editor_auth_policies.sql` lets signed-in staff read their own permissions record and enforces safer role-aware member editing rules.
 - `08_events_calendar.sql` creates the shared event calendar for Birthday Party, Meet Up, Game, Special Event, and custom event labels, with reads for active events and initial write policies.
 - `10_event_type_customization.sql` updates older projects that still use the original event-type constraint so custom event labels can be saved.
-- `11_weekly_wishlists.sql` adds live weekly wish lists, the legacy item limits, and the original member-email link table used for self-service wish list posting.
-- `12_member_owned_events.sql` extends the events policies so linked members can post events and manage only the events created under their own linked member profile.
+- `11_weekly_wishlists.sql` adds persistent member wish lists, the legacy item limits, and the original member-email link table used for self-service wish list posting.
+- `12_member_owned_events.sql` establishes linked-member ownership for event posts. The latest role migration lets Event Planners manage their own events and Game Masters manage their own Game events.
 - `13_wishlist_image_uploads_and_comments.sql` adds the public wishlist image bucket, owner-only image post updates, and public gift comments.
 - `14_invite_code_account_claims.sql` adds invite-code claiming, links member ownership to `auth.uid()`, and keeps self-service email/password resets inside Supabase Auth.
 - `supabase/migrations/20260512000100_self_owned_posting.sql` locks new wish list and event posts to the signed-in member profile while still allowing staff to moderate existing event posts.
@@ -58,13 +62,17 @@ Notes:
 - `supabase/migrations/20260513000300_winner_closes_giveaway.sql` updates the winner RPCs so the selected winner is posted and the giveaway is stamped closed at the same moment.
 - `supabase/migrations/20260513000400_chat_module.sql` adds fixed chat rooms, authenticated message reads, linked-member posting, admin moderation, and the chat image bucket.
 - `supabase/migrations/20260513000500_admin_chat_posting.sql` widens chat posting so admins can send messages on behalf of any active member profile.
-- `supabase/migrations/20260514000100_yomodels_module.sql` adds the YoModels image gallery, Gothicka-only publishing rights, and the public YoModels storage bucket.
+- `supabase/migrations/20260514000100_yomodels_module.sql` adds the YoModels image gallery, its initial publishing policies, and the public YoModels storage bucket.
 - `supabase/migrations/20260514000200_fix_member_invite_rpc.sql` qualifies the `member_invites.member_id` column inside `create_member_invite()` so admin invite-code creation works reliably.
 - `supabase/migrations/20260514000300_fix_invite_hash_pgcrypto_lookup.sql` qualifies `extensions.digest(...)` inside `hash_member_invite_code()` so invite-code hashing works with Supabase's `extensions` schema.
 - `supabase/migrations/20260514000400_member_icons.sql` adds reusable member icon columns, the public `member-icons` bucket, and a self-service `set_member_icon()` RPC for linked accounts.
 - `supabase/migrations/20260514000500_dashboard_announcement.sql` adds a singleton `dashboard_settings` table so staff can update the dashboard announcement live from the Admin section.
 - `supabase/migrations/20260514000600_staff_icons.sql` adds reusable staff account icon columns, the public `staff-icons` bucket, and a self-service `set_staff_icon()` RPC for staff accounts.
 - `supabase/migrations/20260517000100_member_activation_rpc.sql` adds a dedicated `set_member_active()` RPC so member deactivation and reactivation do not depend on the broader role-aware `members` table update policy.
+- `supabase/migrations/20260613000100_persistent_member_wishlists.sql` keeps the newest post for each member, preserves older comments, removes duplicate posts, and adds a unique member key.
+- `supabase/migrations/20260613000200_member_content_roles.sql` lets Editors publish and manage their own YoModels posts, and lets Game Masters publish and manage their own Game events.
+- `supabase/migrations/20260613000300_additive_special_role_permissions.sql` keeps special roles additive to Member access, lets Event Planners manage their own events, and gives Moderators chat deletion without admin impersonation access. Helper remains Member-only until its perk is defined.
+- `supabase/migrations/20260613000400_admin_full_access.sql` makes Admin a universal override for members, roles, events, wish lists, giveaways, YoModels, chat, and dashboard management.
 
 ## Supabase CLI Workflow
 
@@ -98,6 +106,10 @@ Apply the existing SQL files from the terminal:
 - Helper script, dashboard announcement editor: `./scripts/apply-supabase-sql.ps1 -Files supabase/migrations/20260514000500_dashboard_announcement.sql`
 - Helper script, staff/admin icons: `./scripts/apply-supabase-sql.ps1 -Files supabase/migrations/20260514000600_staff_icons.sql`
 - Helper script, member activation RPC: `./scripts/apply-supabase-sql.ps1 -Files supabase/migrations/20260517000100_member_activation_rpc.sql`
+- Helper script, persistent member wish lists: `./scripts/apply-supabase-sql.ps1 -Files supabase/migrations/20260613000100_persistent_member_wishlists.sql`
+- Helper script, member content roles: `./scripts/apply-supabase-sql.ps1 -Files supabase/migrations/20260613000200_member_content_roles.sql`
+- Helper script, additive special-role permissions: `./scripts/apply-supabase-sql.ps1 -Files supabase/migrations/20260613000300_additive_special_role_permissions.sql`
+- Helper script, Admin full access: `./scripts/apply-supabase-sql.ps1 -Files supabase/migrations/20260613000400_admin_full_access.sql`
 - Helper script, full ordered set: `./scripts/apply-supabase-sql.ps1 -All`
 - Optional sample event seed: `./scripts/apply-supabase-sql.ps1 -Files supabase/09_seed_sample_event.sql`
 

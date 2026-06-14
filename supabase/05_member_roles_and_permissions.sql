@@ -8,7 +8,7 @@ drop constraint if exists members_group_role_check;
 
 alter table public.members
 add constraint members_group_role_check
-check (group_role in ('member', 'admin', 'event_planner', 'moderator', 'helper'));
+check (group_role in ('member', 'admin', 'event_planner', 'moderator', 'helper', 'editor', 'game_master'));
 
 update public.members
 set group_role = 'admin'
@@ -73,7 +73,7 @@ as $$
     from public.staff_permissions
     where lower(email) = public.current_staff_email()
       and is_active = true
-      and can_manage_members = true
+      and (permission_role = 'admin' or can_manage_members = true)
   );
 $$;
 
@@ -89,7 +89,7 @@ as $$
     from public.staff_permissions
     where lower(email) = public.current_staff_email()
       and is_active = true
-      and can_manage_roles = true
+      and (permission_role = 'admin' or can_manage_roles = true)
   );
 $$;
 
@@ -105,7 +105,7 @@ as $$
     from public.staff_permissions
     where lower(email) = public.current_staff_email()
       and is_active = true
-      and can_manage_events = true
+      and (permission_role = 'admin' or can_manage_events = true)
   );
 $$;
 

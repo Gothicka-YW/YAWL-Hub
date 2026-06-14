@@ -125,7 +125,7 @@ create table if not exists public.wishlist_comments (
     check (did_gift = true or length(btrim(coalesce(comment_text, ''))) > 0)
 );
 
-comment on table public.wishlist_comments is 'Gift comments on active weekly wish list image posts.';
+comment on table public.wishlist_comments is 'Gift comments on persistent member wish list image posts.';
 comment on column public.wishlist_comments.did_gift is 'Marks comments where the commenter is telling the poster they gifted.';
 
 create index if not exists wishlist_comments_wishlist_created_at_idx

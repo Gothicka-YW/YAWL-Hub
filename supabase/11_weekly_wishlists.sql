@@ -15,7 +15,7 @@ create table if not exists public.member_accounts (
     check (email = lower(email))
 );
 
-comment on table public.member_accounts is 'Links Supabase Auth emails to a single member row for self-service features like weekly wishlists.';
+comment on table public.member_accounts is 'Links Supabase Auth emails to a single member row for self-service features like persistent wish lists.';
 
 create unique index if not exists member_accounts_member_id_key
   on public.member_accounts (member_id);
@@ -89,12 +89,12 @@ $$;
 create table if not exists public.wishlist_posts (
   id uuid primary key default gen_random_uuid(),
   member_id uuid not null references public.members(id) on delete cascade,
-  week_start_date date not null,
+  week_start_date date,
   member_name_snapshot text not null,
   member_in_game_name_snapshot text,
   house_key_snapshot text,
-  summary text not null default 'Weekly wishlist for the current Sunday reset.',
-  status_note text not null default 'Wishlist posted for this week.',
+  summary text not null default 'Persistent wish list, updated whenever the member needs.',
+  status_note text not null default 'Wish list is active and ready for updates.',
   thank_you_note text,
   is_active boolean not null default true,
   created_by_email text not null default public.current_user_email(),
@@ -108,10 +108,10 @@ create table if not exists public.wishlist_posts (
     check (length(btrim(status_note)) > 0)
 );
 
-comment on table public.wishlist_posts is 'One current-week wishlist board per member, with snapshots of the member label and house key for stable rendering.';
+comment on table public.wishlist_posts is 'One persistent wish list board per member, with snapshots of the member label and house key for stable rendering.';
 
-create unique index if not exists wishlist_posts_member_week_key
-  on public.wishlist_posts (member_id, week_start_date);
+create unique index if not exists wishlist_posts_member_key
+  on public.wishlist_posts (member_id);
 
 drop trigger if exists set_wishlist_posts_updated_at on public.wishlist_posts;
 
@@ -212,7 +212,7 @@ create table if not exists public.wishlist_items (
     check (item_source_url is null or item_source_url ~* '^https?://')
 );
 
-comment on table public.wishlist_items is 'Structured items inside a member''s weekly wishlist board.';
+comment on table public.wishlist_items is 'Structured items inside a member''s persistent wish list board.';
 
 create unique index if not exists wishlist_items_wishlist_sort_order_key
   on public.wishlist_items (wishlist_id, sort_order);
@@ -247,11 +247,11 @@ begin
     and id <> current_id;
 
   if existing_count >= 20 then
-    raise exception 'Each weekly wishlist can contain at most 20 items.';
+    raise exception 'Each wish list can contain at most 20 items.';
   end if;
 
   if new.availability_status = 'out_of_store' and out_of_store_count >= 10 then
-    raise exception 'Each weekly wishlist can contain at most 10 out-of-store items.';
+    raise exception 'Each wish list can contain at most 10 out-of-store items.';
   end if;
 
   return new;

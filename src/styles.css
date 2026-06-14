@@ -2352,6 +2352,16 @@ textarea {
   color: #8a6425;
 }
 
+.tag--role-editor {
+  background: rgba(126, 82, 160, 0.14);
+  color: #684282;
+}
+
+.tag--role-game-master {
+  background: rgba(212, 126, 43, 0.16);
+  color: #985710;
+}
+
 .tag--role-moderator {
   background: rgba(47, 123, 115, 0.14);
   color: var(--teal);

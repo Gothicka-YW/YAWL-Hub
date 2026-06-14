@@ -1,6 +1,6 @@
 # YAWL Hub Handoff
 
-Last updated: 2026-05-10
+Last updated: 2026-06-13
 
 ## Current State
 
@@ -12,7 +12,7 @@ Last updated: 2026-05-10
 - Local-only data: private notes, gifted status, visited status.
 - Shared live data: member directory in Supabase.
 - Shared event calendar: supported in the app and enabled after `supabase/08_events_calendar.sql` is run. Existing projects that already used the older event-type constraint should also run `supabase/10_event_type_customization.sql`.
-- Weekly wishlist board now supports a live Supabase-backed current-week image-post workflow after `supabase/11_weekly_wishlists.sql` and `supabase/13_wishlist_image_uploads_and_comments.sql` are run.
+- The Wish Lists board uses one persistent Supabase-backed image post per member after `supabase/11_weekly_wishlists.sql`, `supabase/13_wishlist_image_uploads_and_comments.sql`, and `supabase/migrations/20260613000100_persistent_member_wishlists.sql` are run.
 - Supabase CLI is initialized for this repo; use the helper scripts in `scripts/` to link the project and run top-level SQL files from the terminal.
 
 ## What Is Working
@@ -21,8 +21,8 @@ Last updated: 2026-05-10
 - Members page uses a Facebook-first row layout.
 - Members page now supports search, role filtering, and a home-link-only view for gifting runs.
 - YoWorld name is shown as the confirmation field for gifting.
-- Member roles are supported in the UI: admin, event planner, moderator, helper, member.
-- The Wishlists tab now supports one PNG/JPEG image post per member for the current week, owner-only updates to that same post, public gift comments, and member-home links pulled from the linked member record.
+- Member roles are supported in the UI: admin, event planner, editor, game master, moderator, helper, member.
+- The Wishlists tab supports one PNG/JPEG image post per member, continuous owner-only updates to that same post, public gift comments, and member-home links pulled from the linked member record.
 - Admin Tools now includes invite-code generation so staff can create one-time member claim codes without asking for personal email addresses.
 - Account section now supports:
   - Supabase email/password sign-in
@@ -52,10 +52,12 @@ Last updated: 2026-05-10
 - `supabase/07_admin_editor_auth_policies.sql`: required for the Account/Admin Tools flow to read staff permissions and perform role-safe writes.
 - `supabase/08_events_calendar.sql`: creates the shared events table, read policies, and event-manager write policies.
 - `supabase/10_event_type_customization.sql`: updates older event rows and constraints so Birthday Party, Meet Up, Game, Special Event, and custom event labels are supported.
-- `supabase/11_weekly_wishlists.sql`: creates member account links plus the live weekly wishlist and legacy item tables with RLS.
-- `supabase/12_member_owned_events.sql`: lets linked member accounts post and manage only their own events.
+- `supabase/11_weekly_wishlists.sql`: creates member account links plus the persistent member wishlist and legacy item tables with RLS.
+- `supabase/12_member_owned_events.sql`: establishes owned event posting; the latest content-role migration limits self-service event posting to Game Masters creating Game entries.
 - `supabase/13_wishlist_image_uploads_and_comments.sql`: adds the wishlist image storage bucket, image-post columns, and public gift comments.
 - `supabase/14_invite_code_account_claims.sql`: adds member invite codes, `auth.uid()` member ownership, and auth-user-based member claim support with legacy email-link fallback.
+- `supabase/migrations/20260613000100_persistent_member_wishlists.sql`: consolidates older weekly posts and enforces one continuously updated wish list per member.
+- `supabase/migrations/20260613000200_member_content_roles.sql`: adds Editor access for owned YoModels posts and Game Master access for owned Game events.
 
 ## Required Supabase Run Order
 
@@ -74,6 +76,8 @@ If setting up from scratch:
 11. Run `supabase/12_member_owned_events.sql` if linked members should manage their own events
 12. Run `supabase/13_wishlist_image_uploads_and_comments.sql`
 13. Run `supabase/14_invite_code_account_claims.sql`
+14. Run `supabase/migrations/20260613000100_persistent_member_wishlists.sql`
+15. Run `supabase/migrations/20260613000200_member_content_roles.sql`
 
 ## Sensitive Files Kept Local
 
@@ -96,9 +100,9 @@ Apply and test the invite-code member claim flow against the real Supabase proje
 4. Generate an invite code for one member and send it privately.
 5. In a separate member account, create or sign in to a Supabase Auth login and claim the invite code in Account.
 6. Open the Wishlists tab and verify:
-  - the current-week board loads from Supabase
-  - a claimed member can upload a PNG/JPEG wishlist for the current Sunday reset
-  - saving again updates the same post instead of creating a duplicate
+  - the persistent member board loads from Supabase
+  - a claimed member can upload one PNG/JPEG wishlist
+  - saving again continuously updates the same post instead of creating a duplicate
   - another normal member cannot update someone else's post
   - people can add gift comments under the post
   - the home link button opens the member's saved house link
@@ -114,4 +118,4 @@ Apply and test the invite-code member claim flow against the real Supabase proje
 
 Use this prompt in a new chat if needed:
 
-"Continue work on YAWL Hub. The repo already has live Supabase member reads, a shared event calendar, and a live current-week wishlist image/comment system. `supabase/14_invite_code_account_claims.sql` now adds admin invite codes plus `auth.uid()` member claims with legacy email-link fallback. Verify the invite flow works end to end and finish testing self-service member posting."
+"Continue work on YAWL Hub. The repo already has live Supabase member reads, a shared event calendar, and one persistent wishlist image/comment post per member. `supabase/14_invite_code_account_claims.sql` adds admin invite codes plus `auth.uid()` member claims with legacy email-link fallback. Verify the invite flow works end to end and finish testing self-service member posting."
